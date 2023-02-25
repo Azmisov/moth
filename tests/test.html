@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<script type="module">
+		import { Reactive }  from "./Value.mjs";
+
+		let span;
+		const counter = new Reactive();
+		counter.subscribe(() => {
+			span.textContent = counter.value;
+		}, "animation", 1000);
+
+		document.addEventListener("DOMContentLoaded", () => {
+			span = document.getElementById("span");
+			counter.value = 0;
+		});
+
+		window.increment = () => {
+			counter.value++;
+		}
+	</script>
+</head>
+<body>
+	Counter: <span id="span"></span>
+	<button onclick="increment()">Increment</button>
+</body>
+</html>

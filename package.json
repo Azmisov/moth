@@ -1,0 +1,17 @@
+{
+  "name": "moth",
+  "version": "1.0.0",
+  "description": "Another reactive library",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Isaac Nygaard",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "colors": "^1.4.0"
+  }
+}
