@@ -2,16 +2,23 @@
   "name": "moth",
   "version": "1.0.0",
   "description": "Another reactive library",
-  "main": "index.js",
+  "main": "./src/Subscriber.mjs",
   "directories": {
     "test": "tests"
   },
   "scripts": {
+    "docs": "jsdoc --configure ./node_modules/clean-jsdoc-theme/preset_jsdoc_config.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Azmisov/moth.git"
+  },
   "author": "Isaac Nygaard",
-  "license": "GPL-3.0-or-later",
+  "homepage": "https://azmisov.github.io/moth/",
+  "license": "GPL-3.0",
   "devDependencies": {
+    "clean-jsdoc-theme": "github:Azmisov/clean-jsdoc-theme",
     "colors": "^1.4.0"
   }
 }

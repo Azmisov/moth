@@ -1,7 +1,8 @@
+import AutoQueue from "./AutoQueue.mjs";
 import { Queue } from "./Queue.mjs";
-import { Subscriber, Link, LinkAsync } from "./Subscriber.mjs";
+import { Subscriber, Link } from "./Subscriber.mjs";
 
-/** Tracks iterator vars for _sync, which can be restarted and run recursively */
+/** Tracks iterator vars for sync, which can be restarted and run recursively */
 class SynchronousIterator{
 	i;
 	stop;
@@ -20,26 +21,35 @@ class SynchronousIterator{
 }
 
 export class Reactive{
+	/** Default options for subscribe method
+	 * @type {Reactive~SubscribeOptions}
+	 */
+	static subscribe_defaults = {
+		queue: AutoQueue(),
+		notify: false,
+		tracking: false,
+		unsubscribe: false
+	};
 	/** Indicates when the last notify call was performed, as given by a Queue.calls timestamp;
 	 * this is used to avoid repeatedly queueing notifications in a loop
 	 * @type {number}
 	 */
-	_dirty;
+	dirty;
 	/** A list of links to synchrounous subscribers
 	 * @type {Link[]}
 	 */
-	_sync = [];
+	sync = [];
 	/** A list of links to asynchronous subscribers
 	 * @type {Link[]}
 	 */
-	_async = [];
+	async = [];
 	/** Used to handle recursive notification of synchronous subscribers
 	 * @type {SynchronousIterator}
 	 */
-	_sync_iter = new SynchronousIterator();
+	sync_iter = new SynchronousIterator();
 
 	constructor(){
-		this._dirty = Queue.calls-1;
+		this.dirty = Queue.calls-1;
 	}
 
 	/** Reactive value; modifying will notify subscribers */
@@ -58,12 +68,12 @@ export class Reactive{
 	/** Notify subscribers that the value has changed; can be called to manually indicate a change */
 	notify(){
 		// queue async first, since they could be called synchronously in a recursive notify;
-		// we use the _dirty counter to avoid repeated queueing in a loop; it only helps in simple
+		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
 		// cases, e.g. no sync calls, no new subscriptions, no queues flushed
-		if (this._async.length && this._dirty !== Queue.calls){
-			this._dirty = Queue.calls;
-			for (const link of this._async)
-				link.queue();
+		if (this.async.length && this.dirty !== Queue.calls){
+			this.dirty = Queue.calls;
+			for (const link of this.async)
+				link.enqueue();
 		}
 		/* For sync, we have to deal with recursive calls. We could queue all but the first and let
 			the async logic handle it; we'd want a separate LIFO queue (technically a stack) to
@@ -76,69 +86,112 @@ export class Reactive{
 			all of a recursive value's sync links are cleaned before returning. So its not possible
 			to have a dirty link that was not due to the current value.
 
-			Recursive notifies to this same value should restart the _sync loop. This means when the
-			stack unwinds, all unvisited _sync links are now clean, as they've been handled by the
-			recursive notify. To implement this, we'll use a shared iterator variable _sync_iter.
+			Recursive notifies to this same value should restart the sync loop. This means when the
+			stack unwinds, all unvisited sync links are now clean, as they've been handled by the
+			recursive notify. To implement this, we'll use a shared iterator variable sync_iter.
 		*/
-		const sl = this._sync.length;
+		const sl = this.sync.length;
 		if (sl){
-			// recursive notifies could end up calling _async, not just from this value; there are
+			// recursive notifies could end up calling async, not just from this value; there are
 			// some things you can do to narrow the bounds, but I don't think it is worth it
 			Queue.called();
 			// all but first we need to track if still dirty before running
 			if (sl > 1){
 				for (let i=1; i<sl; i++)
-					this._sync[i].dirty = true;
-				// set iter vars before first _sync call, since first may unsubscribe;
+					this.sync[i].dirty = true;
+				// set iter vars before first sync call, since first may unsubscribe;
 				// any new sync subscribers will be clean, hence bounds on length
-				this._sync_iter.reset(1, sl);
+				this.sync_iter.reset(1, sl);
 			}			
-			let link = this._sync[0];
+			let link = this.sync[0];
 			link.call();
 			if (sl > 1){
-				for (; this._sync_iter.i<this._sync_iter.stop; this._sync_iter.i++){
-					link = this._sync[this._sync_iter.i];
+				for (; this.sync_iter.i<this.sync_iter.stop; this.sync_iter.i++){
+					link = this.sync[this.sync_iter.i];
 					if (link.dirty)
 						link.call();
 				}
 				// forces any recursive loops further up stack to exit, since all links are clean now
-				this._sync_iter.reset();
+				this.sync_iter.reset();
 			}
 		}
 	}
+
+	/** Options when subscribing
+	 * @typedef {object} Reactive~SubscribeOptions
+	 * @property {null | Queue | AutoQueue | string | any[]} queue null if synchronous, otherwise
+	 *  the async queue to use; to dynamically create an AutoQueue, you can set this to the `mode`
+	 * 	or a tuple [`mode`,`timeout`]
+	 * @property {string} mode alternative syntax to create AutoQueue; mode argument
+	 * @property {number} timeout alternative syntax to create AutoQueue; timeout argument
+	 * @property {?boolean} notify how subscriber is notified on first subscribe;
+	 * 	- false: not notified
+	 * 	- true: notified
+	 * 	- null: notified, but forcibly synchronous
+	 * @property {boolean | string[]} tracking if a function is passed as the subscriber, a
+	 *  Subscriber object will be dynamically created from it; set this to true to create a
+	 *  TrackingSubscriber with default arguments, or an array of strings to be passed as
+	 *  non-default options
+	 * @property {boolean} unsubscribe return an unsubscribe function instead of the current
+	 * 	subscriber count
+	 */
 
 	/** Subscribe to this value's changes
 	 * @param {object | Subscriber} subscriber this can be any callable object, in which case a
 	 * 	new Subscriber object will be attached to it under an unenumerable key; otherwise, pass
 	 * 	in a Subscriber that you created directly
-	 * @param {string} mode how this subscriber wants to be notified; if "sync", it will be notified
-	 * 	synchronously; any other value is asynchronous, with the scheduling mode given by one of
-	 * 	QueueManager.modes
-	 * @param {number} timeout for compatible async modes, this gives a timeout or deadline for
-	 * 	when the notification should occur; for best results, try to use a common timeouts across
-	 * 	different subscriptions, as notifications are batched and each unique timeout requires an
-	 * 	additional queue
-	 * @returns {number} new subscriber count
+	 * @param {Reactive~SubscribeOptions | null | Queue | AutoQueue | string} opts for full
+	 *  configuration, this should be an object containing config options; otherwise it can be just
+	 *  the `queue` parameter
+	 * @returns {number | any} new subscriber count, or an unsubscribe function if requested instead
 	 */
-	subscribe(subscriber, mode="microtask", timeout=-1){
+	subscribe(subscriber, opts={}){
+		// opts can just be queue option
+		if (!opts || opts.constructor !== Object)
+			opts = {queue: opts};
 		if (!(subscriber instanceof Subscriber))
-			subscriber = Subscriber.attach(subscriber);
-		let link;
+			subscriber = Subscriber.attach(subscriber, opts.tracking || Reactive.subscribe_defaults.tracking);
 		// check if already subscribed;
 		// infrequent, so we just do a linear search
-		if (Link.findSubscriber(this._sync, subscriber) !== -1 || Link.findSubscriber(this._async, subscriber) !== -1)
+		if (Link.findSubscriber(this.sync, subscriber) !== -1 || Link.findSubscriber(this.async, subscriber) !== -1)
 			throw Error("Already subscribed");
-		if (mode === "sync"){
-			link = new Link(this, subscriber);
-			this._sync.push(link);
+		// get the subscriber queue
+		let queue;
+		if ("queue" in opts){
+			queue = opts.queue;
+			if (typeof queue === "string")
+				queue = [queue, -1];
+			if (Array.isArray(queue))
+				queue = AutoQueue(...queue);
 		}
+		else if ("mode" in opts)
+			queue = AutoQueue(opts.mode, opts.timeout ?? -1);
+		else queue = Reactive.subscribe_defaults.queue;
+		// add subscriber
+		const link = new Link(subscriber, queue);
+		if (!queue)
+			this.sync.push(link);
 		else{
-			link = new LinkAsync(this, subscriber, mode, timeout);
-			this._async.push(link);
+			this.async.push(link);
 			// forces requeue on next notify
-			this._dirty--;
+			this.dirty--;
 		}
-		return this._sync.length + this._async.length;
+		subscriber.subscribe(this, link);
+		// first notify
+		const notify = "notify" in opts ? opts.notify : Reactive.subscribe_defaults.notify;
+		if (notify !== false){
+			// sync (possibly forced)
+			if (notify === null || !queue){
+				Queue.called();
+				link.call();
+			}
+			// async 
+			else link.enqueue();
+		}
+		// return value
+		if (opts.unsubscribe || Reactive.subscribe_defaults.unsubscribe)
+			return this.unsubscribe.bind(this, subscriber);
+		return this.sync.length + this.async.length;
 	}
 	/** Unsubscribe from this value's changes
 	 * @param {object | Subscriber} subscriber what to unsubscribe; if an object, it should have a
@@ -151,22 +204,22 @@ export class Reactive{
 		// remove link from value;
 		// infrequent, so we just do a linear search
 		let link = null;
-		let i = Link.findSubscriber(this._sync, subscriber);
+		let i = Link.findSubscriber(this.sync, subscriber);
 		if (i !== -1){
-			link = this._sync.splice(i, 1)[0];
+			link = this.sync.splice(i, 1)[0];
 			// in case of unsubscribe during synchronous notify
-			this._sync_iter.unsubscribe(i);
+			this.sync_iter.unsubscribe(i);
 		}
 		else{
-			i = Link.findSubscriber(this._async, subscriber);
+			i = Link.findSubscriber(this.async, subscriber);
 			if (i !== -1)
-				link = this._async.splice(i, 1)[0];
+				link = this.async.splice(i, 1)[0];
 		}
 		if (link === null)
 			throw Error("Not subscribed");
 		// remove link from subscriber
-		subscriber.unsubscribe(link);
-		return this._sync.length + this._async.length;
+		subscriber.unsubscribe(this, link);
+		return this.sync.length + this.async.length;
 	}
 }
 

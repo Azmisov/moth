@@ -1,5 +1,5 @@
 import colors from 'colors';
-import { QueueManager, Queue } from "../src/Queue.mjs";
+import AutoQueue from "../src/AutoQueue.mjs";
 import { ReactiveValue, ReactiveAccessor, ReactivePointer, ReactiveProxy } from "../src/Value.mjs";
 
 const nodejs_blacklist = new Set(["animation","idle"])
@@ -45,7 +45,7 @@ add("batch", (passed, failed) => {
 	let count = 0;
 	function cbk(){ count++; }
 	let vals = [];
-	for (let m in QueueManager.modes){
+	for (let m in AutoQueue.modes){
 		if (blacklist.has(m))
 			continue;
 		const v = new ReactiveValue(0)
@@ -74,11 +74,11 @@ add("recursive sync", (passed, failed) => {
 		if (v.value > 10)
 			v.value = 10;
 		count++;
-	}, "sync");
+	}, null);
 	let count2 = 0;
 	v.subscribe(() => {
 		count2++;
-	}, "sync");
+	}, null);
 	v.value = 12;
 	setTimeout(() => {
 		if (count2 != 1 || count != 2 )
@@ -93,7 +93,7 @@ add("batch sync", (passed, failed) => {
 	let count = 0;
 	function cbk(){ count++ }
 	a.subscribe(cbk);
-	b.subscribe(cbk, "sync");
+	b.subscribe(cbk, null);
 	a.value++;
 	b.value++;
 	setTimeout(() => {
@@ -107,7 +107,7 @@ add("unsubscribe", (passed, failed) => {
 	let count = 0;
 	let v = new ReactiveValue(0);
 	let cbks = [];
-	for (let m in QueueManager.modes){
+	for (let m in AutoQueue.modes){
 		if (blacklist.has(m))
 			continue;
 		const c = () => count++;
@@ -151,7 +151,7 @@ add("recursive sync unsubscribe", (passed, failed) => {
 		count |= 0b1000;
 	};
 	for (const cbk of [a,b,c,d])
-		v.subscribe(cbk, "sync");
+		v.subscribe(cbk, null);
 	v.value++;
 	setTimeout(() => {
 		if (count !== 0b111)
@@ -230,7 +230,7 @@ add("deep reactive proxy failure", (passed, failed) => {
 	let val = {a:{val:10}, b:{val:5}};
 	let rp = new ReactiveProxy(val, true);
 	let count = 0;
-	rp.subscribe(() => count++, "sync");
+	rp.subscribe(() => count++, null);
 	let p = rp.value;
 	let cached = p.a; // orphaned proxy
 	p.a = p.b; // first change
@@ -277,7 +277,7 @@ add("flush", (passed, failed) => {
 	let count = 0;
 	r.subscribe(() => count++);
 	r.value++;
-	QueueManager.flush(false);
+	AutoQueue.flush(false);
 	if (count != 1)
 		failed("wrong count");
 	passed();
@@ -298,7 +298,7 @@ add("queue optimization", (passed, failed) => {
 		}
 	}
 	r1.subscribe(fn);
-	r2.subscribe(fn, "sync");
+	r2.subscribe(fn, null);
 	r2.subscribe(() => {
 		// step #4: fn queued a last time; count 2->3
 		r1.value++;
@@ -312,5 +312,5 @@ add("queue optimization", (passed, failed) => {
 	});
 })
 
-// run(["queue optimization"]);
+// run(["recursive sync"]);
 run();

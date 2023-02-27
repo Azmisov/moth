@@ -22,9 +22,9 @@ export class Queue{
 	}
 
 	/** Unique queue identifier, set by the QueueManager
-	 * @type {string}
+	 * @type {string | Symbol}
 	 */
-	qid;
+	qid = Symbol();
 	/** Flag that indicates the queue has been used; used to prevent reaping */
 	used = false;
 	/** List of subscribers (callbacks) currently queued; for RecursiveQueue, the head of the list
@@ -46,7 +46,7 @@ export class Queue{
 	/** Add a callback to the queue, scheduling notification if needed. Callback should
 	 * not be queued twice, a constraint that should be enforced by the caller
 	 */
-	queue(subscriber){
+	enqueue(subscriber){
 		this.subscribers.push(subscriber)
 		// queue limit reached?
 		if (++this.queued > Queue.queued_max){
@@ -295,110 +295,4 @@ export class IdleQueue extends BufferedQueue{
 		return requestIdleCallback(this.notify_bound, {timeout: this.timeout});
 	}
 	cancel = cancelIdleCallback;
-}
-
-/** Global map of serialized queue parameters to the corresponding queue */
-let _queues = new Map();
-/** Timer for _reap */
-let _reap_timer = null;
-/** Reaps unused queues from _queues; this is beneficial for timeout queues, which may only be used once
- * @param {boolean} force force removal even if it was previously used
- */
-function _reap(force=false){
-	for (const [qid, queue] of _queues){
-		// not used since last reap
-		if ((force || !queue.used) && !queue.queued)
-			_queues.delete(qid);
-		else queue.used = false;
-	}
-	if (_queues.size && QueueManager.reap_interval !== Infinity)
-		_reap_timer = setTimeout(_reap, QueueManager.reap_interval);
-}
-/** Singleton which manages creation/deletion of queues */
-export const QueueManager = {
-	/** Interval in milliseconds to reap empty queues to free memory; set to Infinity to disable */
-	reap_interval: 5000,
-	/** If number of queues exceeds this number, try reaping immediately; must be > 1 */
-	reap_size: 10,
-	/** Supported queue modes and their Queue class; modes are listed in roughly the order they
-	 * are handled in the event loop
-	 * @type {Object<string, Queue>}
-	 */
-	modes: {
-		tick: TickQueue,
-		microtask: MicrotaskQueue,
-		promise: PromiseQueue,
-		immediate: ImmediateQueue,
-		message: MessageQueue,
-		timeout: TimeoutQueue,
-		animation: AnimationQueue,
-		idle: IdleQueue,
-		manual: BufferedQueue,
-	},
-	/** Retrieve and possibly create a queue with the given parameters
-	 * @param {string} qid unique string for these parameters
-	 * @param {string} [mode="microtask"] one of QueueManager.modes
-	 * @param {number} [timeout=-1] a millisecond timeout for compatible queues; behavior for a
-	 *  negative value is queue dependent: timeout = minimal delay, animation/idle = no deadline
-	 */
-	ensure(qid, mode="microtask", timeout=-1){
-		let queue = _queues.get(qid);
-		// create new queue
-		if (!queue){
-			const clazz = this.modes[mode];
-			if (!clazz)
-				throw Error("Unknown queue mode");
-			queue = new clazz(timeout);
-			queue.qid = qid;
-			_queues.set(qid, queue);
-			
-			// handle queue reaping
-			if (_queues.size === 1 && this.reap_interval !== Infinity)
-				_reap_timer = setTimeout(_reap, this.reap_interval);
-			else if (_queues.size > this.reap_size){
-				clearTimeout(_reap_timer);
-				_reap();
-			}
-		}
-		return queue;
-	},
-	/** Get a queue you know exists */
-	get(qid){
-		return _queues.get(qid);
-	},
-	/** Manually trigger cleanup of unused queues */
-	reap(){
-		clearTimeout(_reap_timer);
-		_reap(true);
-	},
-	/** Flush a queue of a particular mode */
-	flush(recursive, mode="microtask", timeout=-1){
-		const q = this.get(mode + timeout);
-		if (q)
-			q.flush(recursive);
-	},
-	/** Flush all queues in an arbitrary order */
-	flushAll(recursive){
-		for (const q of _queues.values())
-			q.flush(recursive);
-	}
-};
-export default QueueManager;
-
-
-class QueueType{
-	constructor(mode="microtask", timeout=-1){
-		this.mode = mode;
-		this.timeout = timeout;
-		this.qid = mode + timeout;
-	}
-	flush(recursive){
-		QueueManager.flush(recursive, this);
-	}
-	ensure(){
-		return QueueManager.
-	}
-	get(){
-		return .get(this.qid);
-	}
 }
