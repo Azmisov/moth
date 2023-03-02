@@ -1,3 +1,4 @@
+import wrappable from "./wrappable.mjs";
 import AutoQueue from "./AutoQueue.mjs";
 import { Queue } from "./Queue.mjs";
 import { Subscriber, Link } from "./Subscriber.mjs";
@@ -43,20 +44,27 @@ export class Reactive{
 	 * @type {Link[]}
 	 */
 	async = [];
-	/** Used to handle recursive notification of synchronous subscribers
+	/** Used to handle recursive notification of synchronous subscribers; initialized when
+	 * the first sync subscriber is registered
 	 * @type {SynchronousIterator}
 	 */
-	sync_iter = new SynchronousIterator();
+	sync_iter;
 
 	constructor(){
 		this.dirty = Queue.calls-1;
 	}
 
-	/** Reactive value; modifying will notify subscribers */
+	/** Reactive value; modifying will notify subscribers. Accessor getter/setter are not inherited,
+	 * so need to be implemented together
+	 */
 	get value(){ throw Error("Not implemented"); }
 	set value(value){ throw Error("Not implemented"); }
 	/** Set the value without notifying any subscribers, e.g. assuming the value was always thus */
 	assume(value){ throw Error("Not implemented"); }
+	/** Returns the raw type that this Reactive object wraps
+	 * @returns {object} For values, `{value}`; for accessors `{get,set}`
+	 */
+	unwrap(){ throw Error("Not implemented"); }
 	
 	/** Update the value by applying a transformation function; `transform` will be passed the current value */
 	update(transform){ this.value = transform(this.value); }
@@ -119,15 +127,15 @@ export class Reactive{
 
 	/** Options when subscribing
 	 * @typedef {object} Reactive~SubscribeOptions
-	 * @property {null | Queue | AutoQueue | string | any[]} queue null if synchronous, otherwise
-	 *  the async queue to use; to dynamically create an AutoQueue, you can set this to the `mode`
-	 * 	or a tuple [`mode`,`timeout`]
-	 * @property {string} mode alternative syntax to create AutoQueue; mode argument
-	 * @property {number} timeout alternative syntax to create AutoQueue; timeout argument
-	 * @property {?boolean} notify how subscriber is notified on first subscribe;
+	 * @property {null | Queue | AutoQueue | string | any[]} queue null/"sync" if synchronous,
+	 *  otherwise the async queue to use; to dynamically create an AutoQueue, you can set this to
+	 *  the `mode` or a tuple [`mode`,`timeout`]
+	 * @property {string} mode alternative syntax to create AutoQueue; mode argument; no default
+	 * @property {number} timeout alternative syntax to create AutoQueue; timeout argument; no default
+	 * @property {?(boolean | string)} notify how subscriber is notified on first subscribe;
 	 * 	- false: not notified
 	 * 	- true: notified
-	 * 	- null: notified, but forcibly synchronous
+	 * 	- null/"sync": notified, but forcibly synchronous
 	 * @property {boolean | string[]} tracking if a function is passed as the subscriber, a
 	 *  Subscriber object will be dynamically created from it; set this to true to create a
 	 *  TrackingSubscriber with default arguments, or an array of strings to be passed as
@@ -150,7 +158,7 @@ export class Reactive{
 		if (!opts || opts.constructor !== Object)
 			opts = {queue: opts};
 		if (!(subscriber instanceof Subscriber))
-			subscriber = Subscriber.attach(subscriber, opts.tracking || Reactive.subscribe_defaults.tracking);
+			subscriber = Subscriber.attach(subscriber, opts.tracking ?? Reactive.subscribe_defaults.tracking);
 		// check if already subscribed;
 		// infrequent, so we just do a linear search
 		if (Link.findSubscriber(this.sync, subscriber) !== -1 || Link.findSubscriber(this.async, subscriber) !== -1)
@@ -159,18 +167,28 @@ export class Reactive{
 		let queue;
 		if ("queue" in opts){
 			queue = opts.queue;
-			if (typeof queue === "string")
-				queue = [queue, -1];
-			if (Array.isArray(queue))
-				queue = AutoQueue(...queue);
+			queue_syntax: {
+				if (queue === "sync")
+					queue = null;
+				else{
+					if (typeof queue === "string")
+						queue = [queue, -1];
+					else if (!Array.isArray(queue))
+						break queue_syntax;
+					queue = AutoQueue(...queue);
+				}
+			}
 		}
 		else if ("mode" in opts)
 			queue = AutoQueue(opts.mode, opts.timeout ?? -1);
 		else queue = Reactive.subscribe_defaults.queue;
 		// add subscriber
 		const link = new Link(subscriber, queue);
-		if (!queue)
+		if (!queue){
 			this.sync.push(link);
+			if (!this.sync_iter)
+				this.sync_iter = new SynchronousIterator();
+		}
 		else{
 			this.async.push(link);
 			// forces requeue on next notify
@@ -181,7 +199,7 @@ export class Reactive{
 		const notify = "notify" in opts ? opts.notify : Reactive.subscribe_defaults.notify;
 		if (notify !== false){
 			// sync (possibly forced)
-			if (notify === null || !queue){
+			if ((notify === null || notify === "sync") || !queue){
 				Queue.called();
 				link.call();
 			}
@@ -194,11 +212,26 @@ export class Reactive{
 		return this.sync.length + this.async.length;
 	}
 	/** Unsubscribe from this value's changes
-	 * @param {object | Subscriber} subscriber what to unsubscribe; if an object, it should have a
-	 * 	Subscriber object as one of its keys
+	 * @param {?(object | Subscriber)} subscriber what to unsubscribe; if an object, it should have
+	 *  a Subscriber object as one of its keys; if falsey, it unsubscribes all
 	 * @returns {number} new subscriber count
 	 */
 	unsubscribe(subscriber){
+		// unsubscribe all links
+		if (!subscriber){
+			if (this.sync.length){
+				for (const l of this.sync)
+					l.subscriber.unsubscribe(this, l);
+				this.sync_iter.reset();
+				this.sync.length = 0;
+			}
+			if (this.async.length){
+				for (const l of this.async)
+					l.subscriber.unsubscribe(this, l);
+				this.async.length = 0;
+			}
+			return 0;
+		}
 		if (!(subscriber instanceof Subscriber))
 			subscriber = subscriber[Subscriber.key];
 		// remove link from value;
@@ -215,13 +248,21 @@ export class Reactive{
 			if (i !== -1)
 				link = this.async.splice(i, 1)[0];
 		}
-		if (link === null)
+		if (link)
 			throw Error("Not subscribed");
 		// remove link from subscriber
 		subscriber.unsubscribe(this, link);
 		return this.sync.length + this.async.length;
 	}
 }
+wrappable(Reactive.prototype, {
+	get(){ return this.value; },
+	set(v){ this.value = v; },
+	unwrap(){
+		this.unsubscribe();
+		return this.unwrap();
+	}
+});
 
 /** Wraps a raw value */
 export class ReactiveValue extends Reactive{
@@ -238,6 +279,9 @@ export class ReactiveValue extends Reactive{
 	}
 	assume(value){
 		this._value = value;
+	}
+	unwrap(){
+		return {value:this._value};
 	}
 }
 /** Wraps a property on another object, using [[Get]] and [[Set]] to access that property */
@@ -257,11 +301,16 @@ export class ReactivePointer extends Reactive{
 	assume(value){
 		this._object[this._property] = value;
 	}
+	unwrap(){
+		return {value:this._object[this._property]};
+	}
 }
 /** Wraps an accessor, with a getter and setter method */
 export class ReactiveAccessor extends Reactive{
 	constructor(getter, setter){
 		super();
+		this._getter = getter;
+		this._setter = setter;
 		this.assume = setter;
 		Object.defineProperty(this, "value", {
 			get: getter,
@@ -270,6 +319,9 @@ export class ReactiveAccessor extends Reactive{
 				this.notify();
 			}
 		});
+	}
+	unwrap(){
+		return { get: this._getter, set: this._setter };
 	}
 }
 /** Wraps an object as a Proxy, where [[Set]] triggers notify */
@@ -284,8 +336,9 @@ export class ReactiveProxy extends Reactive{
 		} catch{}
 		return value;
 	}
-	constructor(value, deep=false){
+	constructor(value, deep=false, native=false){
 		super();
+		const that = this;
 		if (deep){
 			/* No use trying to recursively wrap on initialization, since user may have already
 				stored a reference to a non-proxied sub-value. In general, this can't handle all
@@ -297,41 +350,60 @@ export class ReactiveProxy extends Reactive{
 				detached by being overriden by other. 
 			*/
 			this._handler = {
-				set: (target, property, value, receiver) => {
+				set(target, property, value, receiver){
 					const ret = Reflect.set(target, property, ReactiveProxy.deproxy(value), receiver);
 					if (ret)
-						this.notify();
+						that.notify();
 					return ret;
 				},
-				get: (target, key, receiver) => {
+				get(target, key, receiver){
 					if (key === ReactiveProxy.owner)
-						return this;
+						return that;
 					if (key === ReactiveProxy.target)
 						return target;
-					let val = Reflect.get(target, key, receiver);
+					// rebind to handle native objects
+					let val;
+					if (native){
+						val = target[key];
+						if (val instanceof Function)
+							return function (...args){
+								return val.apply(this === receiver ? target : this, args);
+							};
+					}
+					else val = Reflect.get(...arguments);
 					// for non-primitives, return a deep proxy
 					if (val instanceof Object)
-						val = new Proxy(val, this._handler);
+						return new Proxy(val, that._handler);
 					return val;
 				}
 			}
 		}
 		else{
 			this._handler = {
-				set: (target, key, value, receiver) => {
+				set(target, key, value, receiver){
 					if (key === ReactiveProxy.target)
 						return target;
 					const ret = Reflect.set(target, key, value, receiver);
 					if (ret)
-						this.notify();
+						that.notify();
 					return ret;
 				},
-				get: (target, key, receiver) => {
+				get(target, key, receiver){
 					if (key === ReactiveProxy.owner)
-						return this;
+						return that;
 					if (key === ReactiveProxy.target)
 						return target;
-					return Reflect.get(target, key, receiver);
+					// rebind to handle native objects
+					let val;
+					if (native){
+						const val = target[key];
+						if (val instanceof Function)
+							return function (...args){
+								return val.apply(this === receiver ? target : this, args);
+							};
+					}
+					else val = Reflect.get(...arguments);
+					return val;
 				}
 			};
 		}
@@ -354,5 +426,8 @@ export class ReactiveProxy extends Reactive{
 			this._value = new Proxy(value, this._handler);
 		else this._value = value;
 		return true;
+	}
+	unwrap(){
+		return {value: ReactiveProxy.deproxy(this._value)};
 	}
 }

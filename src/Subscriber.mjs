@@ -201,6 +201,8 @@ export class TrackingSubscriber extends Subscriber{
 					return l.cache;
 				};
 				break;
+			default:
+				throw Error("Unknown keyword for 'args' argument");
 		}
 		map = Array.prototype.map.bind(this.links, map);
 		switch (pass){
@@ -227,6 +229,8 @@ export class TrackingSubscriber extends Subscriber{
 					return callable(a);
 				}
 				break;
+			default:
+				throw Error("Unknown keyword for 'pass' argument");
 		}
 	}
 	subscribe(dep, link){

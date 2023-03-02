@@ -47,9 +47,8 @@ when a value changes. While this provides the strongest guarantees about the pro
 has disadvantages:
 - A very long chain of recursive notifications could risk stack overflow (e.g. mobile browsers can
   have a stack limit of ~7k)
-- For a subscriber with multiple dependencies, updating dependencies in batch will trigger a
-  notification for each individual dependency change. This can mean lots of extra, wasted
-  computation.
+- For a subscriber with multiple dependencies, there is no way to batch changes to its dependencies.
+  Each individual dependency change will trigger a notification.
 - Accumulating changes to a value many times in the same code segment will trigger a notification
   for each intermediate value. For heavy computations (e.g. network requests, DOM updates) you'd
   like to wait until a value has been finalized before updating.
@@ -173,13 +172,29 @@ first. However, the order each queue is scheduled to flush is determined by the 
 event loop.
 
 In the rarer cases where you need exact guarantees about your program's state, you can synchronously
-flush any of the asynchronous queues:
+flush any of the asynchronous queues. You can create a new queue object to create subscriber groups
+that can be flushed together.
 
-You can mix different modes. You can also flush
+You can mix different modes. The earliest notification dequeues the subscriber from any other
+queues.
 
 This library guarantees:
 - A subscriber will only be notified when one of its dependencies has changed
 - After unsubscribing, any pending notifications are discarded
+
+## Wrappers
+
+Limitations:
+- Code can hold references to unwrapped variables, and modifications to those references will not
+  be reactive.
+- Top-level global or local variables in general cannot be wrapped. In some cases you could use
+  `window` or `global` as the containing object, or you use a `ReactiveProxy` if you only care
+  about deep variable changes.
+- Own nonconfigurable properties cannot be wrapped without wrapping the containing object in an
+  `ObjectWrapper`. The old object becomes the prototype of the wrapper, which can break code that
+  relied on `prototype`, `getOwnPropertyDescriptor`, or similar.
+- A wrapped property can be overridden manually either from `defineProperty` or a derived class.
+  This messes with the wrapped value, and `wrap`/`unwrap` methods will not work as expected anymore.
 
 
 TODO:

@@ -36,7 +36,7 @@ export default function AutoQueue(mode="microtask", timeout=-1){
 	// already created AutoQueue with same qid; override object creation and return old ref
 	const exists = queues.get(qid);
 	if (exists)
-		return queues.autoqueue;
+		return exists.autoqueue;
 	// need to create a new AutoQueue
 	if (!new.target)
 		return new AutoQueue(...arguments);
