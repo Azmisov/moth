@@ -1,11 +1,11 @@
 import { performance } from "node:perf_hooks";
-import { ReactiveProxy } from "../src/moth.mjs";
+import { ReactiveProxy, ReactiveProxyArray } from "../src/moth.mjs";
 
 const samples = 5;
-const len = 1000;
+const len = 10000;
 function reactive(){
 	let arr = new Array(len);
-	const r = new ReactiveProxy(arr);
+	const r = new ReactiveProxyArray(arr, true);
 	// setup a subscriber
 	let count = 0;
 	r.subscribe(() => count++);

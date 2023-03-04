@@ -5,3 +5,4 @@ export * from "./Reactive.mjs";
 export * from "./wrappable.mjs";
 export * from "./wrapper.mjs";
 export * from "./wrappers/ObjectWrapper.mjs";
+export * from "./reactives/ReactiveProxyArray.mjs";

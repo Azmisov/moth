@@ -1,9 +1,11 @@
 In some cases, you want to be notified of *deep* changes to an object. For example, changes to an object's properties,
 nested JSON, or maybe the elements of an array.
 
-A traditional way of doing so might be to create a new class type to
-encapsulate the data, and then only manipulate the data using methods that trigger a notify call as well. In many cases,
-this can be a great object-oriented approach. As a small demonstration:
+### Using class methods
+
+A traditional way of doing so might be to create a new class type to encapsulate the data. Then, only manipulate the
+data using methods that trigger a notify call. In many cases, this can be a great object-oriented approach. As a small
+example:
 
 ```js
 class Greeting{
@@ -25,13 +27,15 @@ class Greeting{
 	}
 }
 ```
+We store a single {@link ReactiveValue} to encapsulate all changes to the object. Each of the methods (in this case, the
+settors of some accessor properties), calls its {@link Reactive#notify} method.
 
 ### Using ReactiveProxy
 
 The {@link ReactiveProxy} class provides a quick alternative to listen to shallow or deep changes within an object. It
-wraps the object in a
-[Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy/Proxy) object, a somewhat
-newer JavaScript feature which has good browser support. Any `[[Set]]` operation will trigger notification.
+wraps the object in a [Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy/Proxy)
+object, a somewhat newer JavaScript feature that has good browser support. Any `[[Set]]` operation will trigger
+notification.
 
 Shallow reactivity:
 ```js
@@ -61,7 +65,7 @@ data.counter++;
 
 You can store references to {@link ReactiveProxy#value} and they will be bound to the reactive object. Deep proxies are
 recreated each time they are fetched (via `[[Get]]`), so it can even help to store references in this case. However, be
-aware that primitive types *don't* return a proxy. Primitives must be modified by in-place:
+aware that primitive types *don't* return a proxy. Primitives must be modified in-place:
 ```js
 const data = {child:{counter:0}};
 const r = new ReactiveProxy(data, true);
@@ -91,6 +95,7 @@ You can use {@link ReactiveProxy} to wrap special native types like `Array`:
 const arr = [1,2,3,5,7,11,13];
 const r = new ReactiveProxy(arr);
 // all these operations are reactive!
+r.value[5] = 17;
 r.value.splice(3,2);
 r.value.length = 4;
 r.value.unshift();
@@ -126,4 +131,20 @@ noticeably slower at 1000 elements, and unbearably slow at 10k elements! Suffice
 for arrays is only recommended for smaller lengths.
 
 ### Using ReactiveProxyArray
-The {@link ReactiveProxyArray}
+Given the slowness in using the generic {@link ReactiveProxy} for arrays, as illustrated in the previous section, there
+is another proxy type available optimized specifically for Array-like objects: {@link ReactiveProxyArray}. This class
+wraps the mutating array methods, like `push` or `shift`, and calls {@link Reactive#notify} at the end of each. Recall
+the similarity to the [class method](using-class-methods) approach mentioned earlier. These functions are called on
+the raw array target rather than the Proxy, so don't suffer the slowness of many, repeated calls to ``[[Set]]``.
+
+```js
+const arr = new Array(10000);
+const r = new ReactiveProxyArray(arr);
+// much faster now!
+const r_arr = r.value;
+while (r_arr.length)
+	r_arr.shift();
+// property access is still reactive like before
+r_arr[2] = "Hello world";
+r_arr.length = 20;
+```

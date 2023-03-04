@@ -470,9 +470,16 @@ export class ReactiveProxy extends Reactive{
 		} catch{}
 		return value;
 	}
-	/**  */
-	constructor(value, deep=false, native=false){
+	constructor(value, ...args){
 		super();
+		this.build_handler(...args);
+		this.assume(value);
+	}
+	/** Build the proxy handler which will be used. This is split out from the constructor
+	 * so it can be overriden by subclasses
+	 * @protected
+	 */
+	build_handler(deep=false, native=false){
 		const that = this;
 		if (deep){
 			/* No use trying to recursively wrap on initialization, since user may have already
@@ -542,7 +549,6 @@ export class ReactiveProxy extends Reactive{
 				}
 			};
 		}
-		this.assume(value);
 	}
 	get value(){
 		return this._value;
@@ -565,8 +571,4 @@ export class ReactiveProxy extends Reactive{
 	unwrap(){
 		return {value: ReactiveProxy.deproxy(this._value)};
 	}
-}
-/** A special reactive type designed for `Array` */
-export class ReactiveProxyArray extends ReactiveProxy{
-
 }
