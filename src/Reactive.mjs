@@ -3,7 +3,9 @@ import AutoQueue from "./AutoQueue.mjs";
 import { Queue } from "./Queue.mjs";
 import { Subscriber, Link } from "./Subscriber.mjs";
 
-/** Tracks iterator vars for sync, which can be restarted and run recursively */
+/** Tracks iterator vars for sync, which can be restarted and run recursively
+ * @private
+ */
 class SynchronousIterator{
 	i;
 	stop;
@@ -21,9 +23,27 @@ class SynchronousIterator{
 	}
 }
 
+/** Base class for all reactive values/types. A Reactive value holds a list of {@link Subscriber}
+ * and their associated metadata, and handles notifying these subscribers when the value changes.
+ * Derived classes should implement: the {@link Reactive#value} accessor, {@link Reactive#assume},
+ * and {@link Reactive#unwrap}.
+ * 
+ * The base class is {@link module:wrappable#wrappable|wrappable}, with a sensible default that
+ * should work for most subclasses. It is wrapped as an accessor that forwards to
+ * {@link Reactive#value}. Unwrapping the value will unsubscribe all subscribers, and then call
+ * {@link Reactive#unwrap}. If you want different behavior, you can call
+ * {@link module:wrappable#wrappable|wrappable} on `Reactive.prototype`, or on a subclass or
+ * instance, with your own configuration.
+ * @interface
+ */
 export class Reactive{
-	/** Default options for subscribe method
+	/** Default options for {@link Reactive#subscribe}. By default, a microtask {@link AutoQueue} is
+	 * used, with `notify`, `tracking`, and `unsubscribe` all set to `false`. You can change these
+	 * default options to interface better with external libraries or your preferred syntax.
+	 * @memberof Reactive
+	 * @static
 	 * @type {Reactive~SubscribeOptions}
+	 * @see Reactive#subscribe
 	 */
 	static subscribe_defaults = {
 		queue: AutoQueue(),
@@ -34,46 +54,72 @@ export class Reactive{
 	/** Indicates when the last notify call was performed, as given by a Queue.calls timestamp;
 	 * this is used to avoid repeatedly queueing notifications in a loop
 	 * @type {number}
+	 * @private
 	 */
 	dirty;
 	/** A list of links to synchrounous subscribers
 	 * @type {Link[]}
+	 * @private
 	 */
 	sync = [];
 	/** A list of links to asynchronous subscribers
 	 * @type {Link[]}
+	 * @private
 	 */
 	async = [];
 	/** Used to handle recursive notification of synchronous subscribers; initialized when
 	 * the first sync subscriber is registered
-	 * @type {SynchronousIterator}
+	 * @member {SynchronousIterator} sync_iter
+	 * @private
 	 */
-	sync_iter;
 
+	/** While subclasses can implement this however they want, to be compatible with the library's
+	 * builtin variable wrapping features, the constructor should take either:
+	 * 1. A single raw value as the first argument. This can be used to wrap data properties.
+	 * 2. A getter and setter function as the first two arguments, respectively. This can be used to
+	 *    wrap accessor properties.
+	 */
 	constructor(){
 		this.dirty = Queue.calls-1;
 	}
 
-	/** Reactive value; modifying will notify subscribers. Accessor getter/setter are not inherited,
-	 * so need to be implemented together
+	/** Reactive value. Modifying the value will notify subscribers. The accessor getter/setter are
+	 * not inherited, so derived classes will need to implement both
+	 * @abstract
 	 */
 	get value(){ throw Error("Not implemented"); }
 	set value(value){ throw Error("Not implemented"); }
-	/** Set the value without notifying any subscribers, e.g. assuming the value was always thus */
+	/** Set the value without notifying any subscribers, e.g. assuming the value was always thus
+	 * @param value the updated value 
+	 * @abstract
+	 */
 	assume(value){ throw Error("Not implemented"); }
 	/** Returns the raw type that this Reactive object wraps
 	 * @returns {object} For values, `{value}`; for accessors `{get,set}`
+	 * @abstract
 	 */
 	unwrap(){ throw Error("Not implemented"); }
 	
-	/** Update the value by applying a transformation function; `transform` will be passed the current value */
+	/** Update the value by applying a transformation function. This will notify subscribers.
+	 * @param {function} transform This is passed the current value, and should return the new,
+	 * 	transformed value
+	 */
 	update(transform){ this.value = transform(this.value); }
-	/** Set the value, notifying subscribers */
+	/** Set the value, notifying subscribers. You may also use `reactive.value = value`
+	 * @param value the updated value
+	 * @see Reactive#value
+	 */
 	set(value){ this.value = value; }
-	/** Get the value */
+	/** Get the current value. You may also use `reactive.value`
+	 * @see Reactive#value
+	 */
 	get(){ return this.value; }
 
-	/** Notify subscribers that the value has changed; can be called to manually indicate a change */
+	/** Manually notify subscribers that the value has changed. You might call this if the variable
+	 * has been modified deeply, and so was not changed via {@link Reactive#set} or assigning to
+	 * {@link Reactive#value}. For instance, if implementing a `MyReactiveType` class, you might
+	 * call this at the end of a CRUD method.
+	 */
 	notify(){
 		// queue async first, since they could be called synchronously in a recursive notify;
 		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
@@ -125,33 +171,45 @@ export class Reactive{
 		}
 	}
 
-	/** Options when subscribing
+	/** Options when subscribing. See {@link Reactive.subscribe_defaults} for default values.
 	 * @typedef {object} Reactive~SubscribeOptions
-	 * @property {null | Queue | AutoQueue | string | any[]} queue null/"sync" if synchronous,
-	 *  otherwise the async queue to use; to dynamically create an AutoQueue, you can set this to
-	 *  the `mode` or a tuple [`mode`,`timeout`]
-	 * @property {string} mode alternative syntax to create AutoQueue; mode argument; no default
-	 * @property {number} timeout alternative syntax to create AutoQueue; timeout argument; no default
-	 * @property {?(boolean | string)} notify how subscriber is notified on first subscribe;
-	 * 	- false: not notified
-	 * 	- true: notified
-	 * 	- null/"sync": notified, but forcibly synchronous
-	 * @property {boolean | string[]} tracking if a function is passed as the subscriber, a
-	 *  Subscriber object will be dynamically created from it; set this to true to create a
-	 *  TrackingSubscriber with default arguments, or an array of strings to be passed as
-	 *  non-default options
-	 * @property {boolean} unsubscribe return an unsubscribe function instead of the current
-	 * 	subscriber count
+	 * @property {null | Queue | AutoQueue | string | any[]} queue If `null` or `"sync"`, the
+	 *  subscriber will be notified synchronously.
+	 * 
+	 *  All other options give async notifications. If
+	 *  you don't pass either a {@link Queue} or {@link AutoQueue}, the option specifies arguments
+	 *  to pass to {@link AutoQueue}. This can be a single `mode` argument, or tuple `[mode,
+	 *  timeout]`.
+	 * @property {string} mode Alternative syntax to specify an {@link AutoQueue} queue; this
+	 *  specifies the `mode` argument
+	 * @property {number} timeout Alternative syntax to specify an {@link AutoQueue} queue; this
+	 *  specifies the `timeout` argument
+	 * @property {null | boolean | string} notify Whether the subscriber is notified immediately on
+	 * subscribe, to indicate the current value:
+	 * - `false`: not notified
+	 * - `true`: notified
+	 * - `null` or `"sync"`: notified, but forcibly synchronous
+	 * @property {boolean | string[]} tracking As noted in {@link Reactive#subscribe}, if a function
+	 *  is passed as the subscriber, a {@link Subscriber} object will be dynamically created from
+	 *  it. If this config option is truthy, a {@link TrackingSubscriber} will be created instead.
+	 *  Set this option to `true` use default arguments ({@link TrackingSubscriber.defaults}), or a
+	 *  string array to be passed as non-default options.
+	 * @property {boolean} unsubscribe If true, a bound unsubscribe function will be returned
+	 *  instead of the current subscriber count.
+	 * @see Reactive#subscribe
 	 */
 
 	/** Subscribe to this value's changes
-	 * @param {object | Subscriber} subscriber this can be any callable object, in which case a
-	 * 	new Subscriber object will be attached to it under an unenumerable key; otherwise, pass
-	 * 	in a Subscriber that you created directly
-	 * @param {Reactive~SubscribeOptions | null | Queue | AutoQueue | string} opts for full
-	 *  configuration, this should be an object containing config options; otherwise it can be just
-	 *  the `queue` parameter
-	 * @returns {number | any} new subscriber count, or an unsubscribe function if requested instead
+	 * @param {function | Subscriber} subscriber This can be any callable object, in which case a
+	 *  new {@link Subscriber} will be attached to it under an unenumerable key (see
+	 *  {@link Subscriber.attach}). Otherwise, pass in a {@link Subscriber} that you created
+	 *  directly
+	 * @param {Reactive~SubscribeOptions | null | Queue | AutoQueue | string} opts For full
+	 *  configuration, this should be an object containing config options. Otherwise it can be just
+	 *  the {@link Reactive~SubscribeOptions|queue} config option.
+	 * @returns {number | function} By default, it returns the new subscriber count. If requested
+	 *  via {@link Reactive~SubscribeOptions|unsubscribe} config option, an unsubscribe function can
+	 *  be returned instead.
 	 */
 	subscribe(subscriber, opts={}){
 		// opts can just be queue option
@@ -212,9 +270,11 @@ export class Reactive{
 		return this.sync.length + this.async.length;
 	}
 	/** Unsubscribe from this value's changes
-	 * @param {?(object | Subscriber)} subscriber what to unsubscribe; if an object, it should have
-	 *  a Subscriber object as one of its keys; if falsey, it unsubscribes all
-	 * @returns {number} new subscriber count
+	 * @param {?(function | Subscriber)} subscriber The subscriber you wish to unsubscribe from
+	 * value changes, and remove as a dependency. If a function, it should have an attached
+	 * {@link Subscriber} via {@link Subscriber.attach}. This argument can also be falsey/ommitted,
+	 * which unsubscribes all.
+	 * @returns {number} The new subscriber count
 	 */
 	unsubscribe(subscriber){
 		// unsubscribe all links
@@ -248,7 +308,7 @@ export class Reactive{
 			if (i !== -1)
 				link = this.async.splice(i, 1)[0];
 		}
-		if (link)
+		if (!link)
 			throw Error("Not subscribed");
 		// remove link from subscriber
 		subscriber.unsubscribe(this, link);
@@ -256,15 +316,27 @@ export class Reactive{
 	}
 }
 wrappable(Reactive.prototype, {
-	get(){ return this.value; },
-	set(v){ this.value = v; },
+	// a generic accessor that will work with any subclass
+	accessor(reactive){
+		// reactive.value does less prototype traversal than reactive.get/set
+		return {
+			get(){ return reactive.value; },
+			set(v){ reactive.value = v; }
+		};
+	},
 	unwrap(){
 		this.unsubscribe();
 		return this.unwrap();
 	}
 });
 
-/** Wraps a raw value */
+/** The simplest type of {@link Reactive}, which simply wraps a raw value.
+ * ```js
+ * const r = new ReactiveValue("Hello");
+ * r.value += " world!";
+ * ``` 
+ * @extends Reactive
+ */
 export class ReactiveValue extends Reactive{
 	constructor(value){
 		super();
@@ -284,7 +356,20 @@ export class ReactiveValue extends Reactive{
 		return {value:this._value};
 	}
 }
-/** Wraps a property on another object, using [[Get]] and [[Set]] to access that property */
+/** Wraps a property on another object, using `[[Get]]` (`object[property]`) and `[[Set]]`
+ * (`object[property] = value`) to access that property. This lets another object manage the
+ * storage of the raw value.
+ * ```js
+ * const data = {message: "Hello "};
+ * const r = new ReactivePointer(data, "message");
+ * r.value += " world!";
+ * console.log(data.message); // Hello world!
+ * ```
+ * Note that modifying the value through the owning object will *not* be reactive. For reactivity,
+ * assignments must come from the {@link ReactivePointer} object. To have the owning object be
+ * reactive, you will need to use {@link ObjectWrapper} or similar wrapper class instead.
+ * @extends Reactive
+ */
 export class ReactivePointer extends Reactive{
 	constructor(object, property){
 		super();
@@ -305,26 +390,75 @@ export class ReactivePointer extends Reactive{
 		return {value:this._object[this._property]};
 	}
 }
-/** Wraps an accessor, with a getter and setter method */
+/** Wraps an accessor, with a getter and setter function. Access to the raw underlying value is
+ * mediated by these functions. You can bind the getter/setter to an object ahead of time before
+ * passing to the constructor. Alternatively, this class has been specially designed to allow
+ * deferred binding for get, set, and assume methods. This allows transparent forwarding of the
+ * binding to the getter/setter.
+ * @extends Reactive
+ */
 export class ReactiveAccessor extends Reactive{
+	/** Create a new {@link ReactiveAccessor}
+	 * @param {function} getter Function that returns the current raw, underlying value
+	 * @param {function} setter Function that is passed a new value and should update the raw
+	 * 	underlying value to match it
+	 */
 	constructor(getter, setter){
 		super();
-		this._getter = getter;
-		this._setter = setter;
-		this.assume = setter;
-		Object.defineProperty(this, "value", {
-			get: getter,
-			set(value){
-				this.assume(value);
-				this.notify();
-			}
+		const that = this;
+		const set = function(value){
+			// small tweaks to allows deferred binding
+			setter.call(this, value);
+			that.notify();
+		}
+		Object.defineProperties(this, {
+			// while we only *need* to override value accessor, the accessor is a pain to do
+			// deferred binding on: it can only be accessed via getOwnPropertyDescriptor, and may
+			// require traversing the prototype chain to find its owner
+			get: {
+				configurable: true,
+				writable: true,
+				value: getter
+			},
+			assume: {
+				configurable: true,
+				writable: true,
+				value: setter
+			},
+			set: {
+				configurable: true,
+				writable: true,
+				value: set
+			},
+			value: {
+				configurable: true,
+				get: getter,
+				set: set
+			},
+			unwrap: {
+				configurable: true,
+				writable: true,
+				value(){ return {get:getter, set:setter}; }
+			},
 		});
 	}
-	unwrap(){
-		return { get: this._getter, set: this._setter };
-	}
 }
-/** Wraps an object as a Proxy, where [[Set]] triggers notify */
+wrappable(ReactiveAccessor.prototype, {
+	// makes use of the deferred binding to forward to ctor's getter/setter
+	accessor(value){
+		return {
+			get: value.get,
+			set: value.set
+		};
+	},
+	unwrap(){
+		this.unsubscribe();
+		return this.unwrap();
+	}
+});
+/** Wraps an object as a `Proxy`, where `[[Set]]` triggers notifications.
+ * @extends Reactive
+ */
 export class ReactiveProxy extends Reactive{
 	static owner = Symbol();
 	static target = Symbol();
@@ -336,6 +470,7 @@ export class ReactiveProxy extends Reactive{
 		} catch{}
 		return value;
 	}
+	/**  */
 	constructor(value, deep=false, native=false){
 		super();
 		const that = this;
@@ -430,4 +565,8 @@ export class ReactiveProxy extends Reactive{
 	unwrap(){
 		return {value: ReactiveProxy.deproxy(this._value)};
 	}
+}
+/** A special reactive type designed for `Array` */
+export class ReactiveProxyArray extends ReactiveProxy{
+
 }

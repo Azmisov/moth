@@ -1,14 +1,6 @@
 import { keys, wrappable, get_property, wrap_property, attach_config } from "../wrapper.mjs";
 
-/** Creates a new ObjectWrapper which wraps an existing Object. This allows you to wrap values
- * that are non-configurable. It also stores defualt wrapper values for properties
- */
-export default function ObjectWrapper(root, ...config){
-	const obj = Object.create(root);
-	attach_config(obj, ...config);
-	return obj;
-}
-wrappable(ObjectWrapper.prototype, {
+const wrappable_conf = {
 	value: true,
 	unwrap(){
 		// unwrap all properties
@@ -20,7 +12,19 @@ wrappable(ObjectWrapper.prototype, {
 		Object.defineProperties(value, Object.getOwnPropertyDescriptors(this));
 		return {value};
 	}
-})
+};
+/** Creates a new ObjectWrapper which wraps an existing Object. This allows you to wrap values
+ * that are non-configurable. It also stores defualt wrapper values for properties
+ */
+export default function ObjectWrapper(root, ...config){
+	const obj = Object.create(root);
+	attach_config(obj, ...config);
+	// in case they want to inject as wrappable later on
+	if (!new.target)
+		wrappable(obj, wrappable_conf)
+	return obj;
+}
+wrappable(ObjectWrapper.prototype, wrappable_conf);
 // static members
 function object_unwrap_single(prop, unwrap){
 	// restore old prop
@@ -49,7 +53,7 @@ function object_unwrap_single(prop, unwrap){
 	else delete prop.root[prop.property];
 }
 Object.assign(ObjectWrapper, {
-	wrap(root, property, wrappable){
+	wrap(root, property, wrappable, ...args){
 		// ensure index
 		let index = root[keys.prop_index];
 		if (index){
@@ -64,21 +68,30 @@ Object.assign(ObjectWrapper, {
 		if (root === prop.owner && !prop.configurable)
 			throw TypeError(`Cannot wrap own non-configurable property ${prop.property}; consider wrapping object in an ObjectWrapper`);
 		// wrap the value
-		let {value, config} = wrap_property(wrappable, prop);
-		// attach to root
-		const desc = config.value ? 
-			{
+		let {value, config} = wrap_property(wrappable, args, prop);
+		let desc;
+		// data desriptor
+		if (config.value){
+			desc = {
 				configurable: true,
 				enumerable: prop.enumerable,
 				writable: prop.writable,
 				value
-			} :
-			{
+			};
+		}
+		// accessor descriptor
+		else{
+			let a = config.accessor;
+			// this allows user to bind to value if needed
+			if (a instanceof Function)
+				a = a(value);
+			desc = {
 				configurable: true,
 				enumerable: prop.enumerable,
-				get: config.get.bind(value),
-				set: config.set.bind(value)
+				get: a.get,
+				set: a.set
 			};
+		}
 		Object.defineProperty(root, property, desc);
 		// only store index if we know wrapping the property was successful
 		if (!index){

@@ -2,16 +2,21 @@ import {
 	Queue, TickQueue, MicrotaskQueue, PromiseQueue, ImmediateQueue,
 	MessageQueue, TimeoutQueue, AnimationQueue, IdleQueue, BufferedQueue
 } from "./Queue.mjs";
+import { Subscriber } from "./Subscriber.mjs";
 
 /** Global map of queues managed by AutoQueue; maps qid to corresponding Queue
  * @type {Map<string, Queue>}
+ * @private
  */
 const queues = new Map();
 
-/** Timer for reap() */
+/** Timer for reap()
+ * @private
+ */
 let reap_timer = null;
 /** Reaps unused queues from queues; this is beneficial for timeout queues, which may only be used once
  * @param {boolean} force force removal even if it was previously used
+ * @private
  */
 function reap(force=false){
 	for (const [qid, queue] of queues){
@@ -30,6 +35,7 @@ function reap(force=false){
  *  value is queue dependent: timeout = minimum delay, animation/idle = no deadline; for best
  *  results, try to use common timeouts across different subscriptions, as notifications are
  *  batched and each unique timeout requires an additional queue
+ * @constructor
  */
 export default function AutoQueue(mode="microtask", timeout=-1){
 	const qid = mode+timeout;
@@ -48,13 +54,23 @@ export default function AutoQueue(mode="microtask", timeout=-1){
 }
 // static members
 Object.assign(AutoQueue, {
-	/** Interval in milliseconds to reap empty queues to free memory; set to Infinity to disable */
+	/** Interval in milliseconds to reap empty queues to free memory; set to Infinity to disable
+	 * @type {number}
+	 * @memberof AutoQueue
+	 * @static
+	 */
 	reap_interval: 5000,
-	/** If number of queues exceeds this number, try reaping immediately; must be > 1 */
+	/** If number of queues exceeds this number, try reaping immediately; must be > 1
+	 * @type {number}
+	 * @memberof AutoQueue
+	 * @static
+	 */
 	reap_size: 10,
-	/** Supported queue modes and their Queue class; modes are listed in roughly the order they
+	/** Supported queue modes and their Queue class. Modes are listed in roughly the order they
 	 * are handled in the event loop
 	 * @type {Object<string, Queue>}
+	 * @memberof AutoQueue
+	 * @static
 	 */
 	modes: {
 		tick: TickQueue,
@@ -67,7 +83,10 @@ Object.assign(AutoQueue, {
 		idle: IdleQueue,
 		manual: BufferedQueue,
 	},
-	/** Manually trigger cleanup of unused queues */
+	/** Manually trigger cleanup of unused queues
+	 * @memberof AutoQueue
+	 * @static
+	*/
 	reap(){
 		clearTimeout(reap_timer);
 		reap(true);
@@ -76,6 +95,8 @@ Object.assign(AutoQueue, {
 	 * @param {boolean} recursive if called while the queue is looping through and notifying
 	 * 	subscribers, should we resume the loop (true) or do nothing (false); set to true if calling
 	 * 	from a subscriber and you want to force the queue to flush immediately
+	 * @memberof AutoQueue
+	 * @static
 	 */
 	flush(recursive=false){
 		for (const q of queues.values())
@@ -85,16 +106,20 @@ Object.assign(AutoQueue, {
 // class members
 Object.assign(AutoQueue.prototype, {
 	/** Flush pending notifications for this queue
-	 * @param {boolean} recursive if called while the queue is looping through and notifying
+	 * @param {boolean} [recursive=false] if called while the queue is looping through and notifying
 	 * 	subscribers, should we resume the loop (true) or do nothing (false); set to true if calling
 	 * 	from a subscriber and you want to force the queue to flush immediately
+	 * @memberof AutoQueue.prototype
 	 */
 	flush(recursive=false){
 		const queue = this.get();
 		if (queue)
 			queue.flush(recursive);
 	},
-	/** Ensure the queue has been created; normal code should not call this */
+	/** Ensure the queue has been created; normal code should not call this
+	 * @memberof AutoQueue.prototype
+	 * @private
+	 */
 	ensure(){
 		let queue = this.get();
 		// create new queue
@@ -117,15 +142,24 @@ Object.assign(AutoQueue.prototype, {
 		}
 		return queue;
 	},
-	/** Fetch the internal queue; normal code should not call this */
+	/** Fetch the internal queue. Typical code should not need to call this
+	 * @returns {Queue}
+	 * @memberof AutoQueue
+	 */
 	get(){
 		return queues.get(this.qid);
 	},
-	/** Ensure the queue exists and queue a subscriber */
+	/** Ensure the queue exists and queue a subscriber
+	 * @param {Subscriber} subscriber
+	 * @memberof AutoQueue
+	 */
 	enqueue(subscriber){
 		return this.ensure().enqueue(subscriber);
 	},
-	/** Get the known existing queue and dequeue a subscriber */
+	/** Get the known existing queue and dequeue a subscriber
+	 * @param {Subscriber} subscriber
+	 * @memberof AutoQueue
+	 */
 	dequeue(subscriber){
 		return this.get().dequeue(subscriber);
 	}

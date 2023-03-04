@@ -195,14 +195,3 @@ Limitations:
   relied on `prototype`, `getOwnPropertyDescriptor`, or similar.
 - A wrapped property can be overridden manually either from `defineProperty` or a derived class.
   This messes with the wrapped value, and `wrap`/`unwrap` methods will not work as expected anymore.
-
-
-TODO:
-- wrapper interface
-- lazy value
-- mass subscribe
-- queue mode override
-- derived
-- interface with Svelte
-- allow deadline logic for queues besides idle
-- compiler

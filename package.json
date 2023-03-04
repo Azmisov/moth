@@ -2,13 +2,14 @@
   "name": "moth",
   "version": "1.0.0",
   "description": "Another reactive library",
-  "main": "./src/Subscriber.mjs",
+  "main": "./src/moth.mjs",
+  "browserslist": "> 0.25%, not dead",
   "directories": {
     "test": "tests"
   },
   "scripts": {
-    "docs": "jsdoc --configure ./node_modules/clean-jsdoc-theme/preset_jsdoc_config.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "docs": "./node_modules/clean-jsdoc-theme/node_modules/jsdoc/jsdoc.js --configure ./node_modules/clean-jsdoc-theme/preset_jsdoc_config.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config=jest.config.js"
   },
   "repository": {
     "type": "git",
@@ -18,7 +19,8 @@
   "homepage": "https://azmisov.github.io/moth/",
   "license": "GPL-3.0",
   "devDependencies": {
-    "clean-jsdoc-theme": "github:Azmisov/clean-jsdoc-theme",
-    "colors": "^1.4.0"
+    "clean-jsdoc-theme": "file:../clean-jsdoc-theme",
+    "colors": "^1.4.0",
+    "jest": "^29.4.3"
   }
 }

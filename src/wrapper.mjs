@@ -1,8 +1,9 @@
 /** Mixins and functions to help create wrapper objects;
  * split out from wrappable.mjs since otherwise it would create circular dependency
+ * @module wrapper
  */
 import { keys, wrappable } from "./wrappable.mjs";
-import { ReactiveValue, ReactiveProxy, ReactiveAccessor } from "./Value.mjs";
+import { ReactiveValue, ReactiveProxy, ReactiveAccessor } from "./Reactive.mjs";
 export { keys, wrappable };
 
 /** Figures out which object in the prototype chain owns the property, and fetches the property
@@ -10,14 +11,10 @@ export { keys, wrappable };
  * descriptor with default behavior/options
  * @param {object} root object to search for `property`
  * @param {string} property property name to search for
- * @param {boolean} check_self whether to check `root` for the property, or else start immediately
- * 	checking the prototype chain
  */
-export function get_property(root, property, check_self=true){
+export function get_property(root, property){
 	let desc;
 	let proto = root;
-	if (!check_self)
-		proto = Object.getPrototypeOf(proto);
 	while (true){
 		// not yet defined
 		if (proto === null){
@@ -44,37 +41,16 @@ export function get_property(root, property, check_self=true){
 	};
 }
 
-/** Polyfill for hasOwn that supports Object.create(null)
- * see https://stackoverflow.com/questions/69561596/object-hasown-vs-object-prototype-hasownproperty
- */
-const hasOwn = Object.hasOwn ?
-	Object.hasOwn :
-	(obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
-
-/** Delete a property, wherever it is in the prototype chain; this is unlike the delete operator,
- * which only works on own properties
- * @returns {boolean} whether the property was deleted
- */
-export function delete_property(root, property){
-	let proto = root;
-	while (proto){
-		if (hasOwn(proto, property))
-			return delete proto[property];
-		proto = Object.getPrototypeOf(proto);
-	}
-	return false;
-}
-
 /** Analyzes a property definition and creates an appropriate default Reactive value.
  * Use this as the `wrappable` argument to Wrapper.wrap
  */
-function autoreactive(prop){
+function autoreactive(prop, ...args){
 	if (prop.data)
-		return new (prop.writable ? ReactiveValue : ReactiveProxy)(prop.value);
+		return new (prop.writable ? ReactiveValue : ReactiveProxy)(prop.value, ...args);
 	// accessor descriptor
 	if (!(prop.set && prop.get))
 		throw TypeError("Cannot make incomplete accessor reactive: "+prop.property);
-	return new ReactiveAccessor(prop.get, prop.set);
+	return new ReactiveAccessor(prop.get, prop.set, ...args);
 }
 
 /** Get a wrappable instance of a property definition
@@ -87,9 +63,10 @@ function autoreactive(prop){
  * - a function which returns an object implementing the wrappable interface; it is
  *   passed the full property definition and must return an instance; note the function itself
  *   cannot implement the wrappable interface or it will be considered one of the previous syntaxes
+ * @param args extra arguments to pass to wrappable constructor or function
  * @param {object} prop property definition
  */
-export function wrap_property(wrappable, prop){
+export function wrap_property(wrappable, args, prop){
 	// get default wrappable argument
 	if (!wrappable){
 		// lookup from attached config
@@ -114,12 +91,12 @@ export function wrap_property(wrappable, prop){
 		const proto = wrappable.prototype;
 		if (proto && proto.constructor && (config = proto[keys.wrappable])){
 			if (prop.data)
-				value = new wrappable(prop.value);
-			else value = new wrappable(prop.get, prop.set);
+				value = new wrappable(prop.value, ...args);
+			else value = new wrappable(prop.get, prop.set, ...args);
 		}
 		// function that returns instance
 		else if (wrappable instanceof Function){
-			value = wrappable(prop);
+			value = wrappable(prop, ...args);
 			config = value[keys.wrappable];
 			if (!config)
 				throw TypeError("'wrappable' function didn't return a wrappable instance");

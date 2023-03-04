@@ -1,8 +1,24 @@
-import { add, run } from "./tests.mjs";
+/* TODO:
+	- queue limit
+	- idle time slicing
+	- proxy with private properties
+*/
+
 import AutoQueue from "../src/AutoQueue.mjs";
 import { MicrotaskQueue } from '../src/Queue.mjs';
 import { TrackingSubscriber } from '../src/Subscriber.mjs';
-import { Reactive, ReactiveValue, ReactiveAccessor, ReactivePointer, ReactiveProxy } from "../src/Value.mjs";
+import { Reactive, ReactiveValue, ReactiveAccessor, ReactivePointer, ReactiveProxy } from "../src/Reactive.mjs";
+
+function delay(time){
+	return new Promise(resolve => {
+		setTimeout(resolve, time);
+	});
+}
+function delay_microtask(){
+	return new Promise(resolve => {
+		queueMicrotask(resolve);
+	});
+}
 
 const nodejs_blacklist = new Set(["animation","idle"])
 // Edge did support immediate, but it is now deprecated
@@ -10,7 +26,7 @@ const browser_blacklist = new Set(["tick","immediate"]);
 const blacklist = typeof window === "undefined" ? nodejs_blacklist : browser_blacklist;
 
 // Test that changes are getting batched
-add("batch", (passed, failed) => {
+test("batch", async () => {
 	let count = 0;
 	function cbk(){ count++; }
 	let vals = [];
@@ -26,17 +42,21 @@ add("batch", (passed, failed) => {
 		v.set(6);
 		v.update(v => v+1);
 		v.value++;
-		if (v.value !== 8)
-			failed("incorrect value:"+v.value);
+		expect(v.value).toEqual(8);
 	}
-	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count:"+count);
-		passed();
-	}, 10);
-})
+	await delay(10);
+	expect(count).toEqual(1);
+});
+test("already [un]subscribed", () => {
+	const r = new ReactiveValue(0);
+	function cbk(){}
+	r.subscribe(cbk)
+	expect(r.subscribe.bind(r,cbk)).toThrow(/already subscribed/i);
+	r.unsubscribe(cbk);
+	expect(r.unsubscribe.bind(r,cbk)).toThrow(/not subscribed/i);
+});
 // Test recursive sync
-add("recursive sync", (passed, failed) => {
+test("recursive sync", async () => {
 	let v = new ReactiveValue(0);
 	let count = 0;
 	v.subscribe(() => {
@@ -49,14 +69,12 @@ add("recursive sync", (passed, failed) => {
 		count2++;
 	}, null);
 	v.value = 12;
-	setTimeout(() => {
-		if (count2 != 1 || count != 2 )
-			failed("wrong counts");
-		passed();
-	});
+	await delay();
+	expect(count2).toEqual(1);
+	expect(count).toEqual(2);
 });
 // test batching with sync
-add("batch sync", (passed, failed) => {
+test("batch sync", async () => {
 	let a = new ReactiveValue(0);
 	let b = new ReactiveValue(0);
 	let count = 0;
@@ -65,14 +83,11 @@ add("batch sync", (passed, failed) => {
 	b.subscribe(cbk, null);
 	a.value++;
 	b.value++;
-	setTimeout(() => {
-		if (count != 1)
-			failed("wrong ocunt");
-		passed();
-	});
+	await delay();
+	expect(count).toEqual(1);
 });
 // test basic unsubscribe
-add("unsubscribe", (passed, failed) => {
+test("unsubscribe", async () => {
 	let count = 0;
 	let v = new ReactiveValue(0);
 	let cbks = [];
@@ -86,22 +101,48 @@ add("unsubscribe", (passed, failed) => {
 	v.value++;
 	for (const c of cbks)
 		v.unsubscribe(c);
-	setTimeout(() => {
-		if (count !== 0)
-			failed("wrong count")
-		passed();
-	})
+	await delay();
+	expect(count).toEqual(0);
+});
+// unsubscribe all; testing that async and sync both get reset properly
+test("unsubscribe all", async () => {
+	const r = new ReactiveValue(0);
+	let count = 0;
+	let bits = 0;
+	const c1 = () => {
+		count++;
+		bits |= 0b1;
+		// should not continue on to c2
+		r.unsubscribe();
+	};
+	const c2 = () => {
+		count++;
+		bits |= 0b10;
+	}
+	const c3 = () => {
+		count++;
+		bits |= 0b100;
+	}
+	r.subscribe(c1,"sync");
+	r.subscribe(c2,"sync");
+	r.subscribe(c3);
+	r.value++;
+	r.value++
+	await delay();
+	r.value++;
+	await delay();
+	expect(count).toBe(1);
+	expect(bits).toBe(0b1);
 });
 // small reap test (manually tested via debugging interface)
-add("reap (manually tested)", (passed, failed) => {
+test("reap (manually tested)", () => {
 	let v = new ReactiveValue(0);
 	let count = 0;
 	v.subscribe(() => count++, "timeout", 50);
 	v.value++;
-	passed();
 });
 // recursive unsubscribe inside sync
-add("recursive sync unsubscribe", (passed, failed) => {
+test("recursive sync unsubscribe", async () => {
 	let v = new ReactiveValue(0);
 	let count = 0;
 	const a = () => count |= 0b1;
@@ -122,34 +163,28 @@ add("recursive sync unsubscribe", (passed, failed) => {
 	for (const cbk of [a,b,c,d])
 		v.subscribe(cbk, null);
 	v.value++;
-	setTimeout(() => {
-		if (count !== 0b111)
-			failed("wrong count: "+count);
-		passed();
-	})
+	await delay();
+	expect(count).toEqual(0b111);
 });
 // basic reactive pointer
-add("reactive pointer", (passed, failed) => {
+test("reactive pointer", async () => {
 	let count = 0;
 	const o = {p: 10};
 	let p = new ReactivePointer(o, "p");
 	p.subscribe(() => count++);
 	p.value++;
-	setTimeout(() => {
-		if (count != 1 || o.p !== 11)	
-			failed("wrong count/value");
-		passed();
-	});
+	await delay();
+	expect(count).toEqual(1);
+	expect(o.p).toEqual(11);
 });
 // basic reactive accessor
-add("reactive accessor", (passed, failed) => {
+test("reactive accessor", async () => {
 	class C{
 		_x = 11;
 		get x(){ return this._x; }
 		set x(v) { this._x = v; }
 		assert(){
-			if (this._x !== 11)
-				failed("wrong value");
+			expect(this._x).toEqual(13);
 		}
 	}
 	const c = new C();
@@ -157,45 +192,47 @@ add("reactive accessor", (passed, failed) => {
 		Object.getPrototypeOf(c),
 		"x"
 	);
-	let a = new ReactiveAccessor(desc.get, desc.set);
 	let count = 0;
+	// aot binding
+	let a = new ReactiveAccessor(desc.get.bind(c), desc.set.bind(c));
 	a.subscribe(() => count++);
+	// deferred binding
+	let b = new ReactiveAccessor(desc.get, desc.set);
+	b.subscribe(() => count++);
+	const accessor = Object.getOwnPropertyDescriptor(b,"value");
+	const b_get = accessor.get.bind(c);
+	const b_set = accessor.set.bind(c);
+	// modify
 	a.value++;
-	setTimeout(() => {
-		c.assert();
-		if (count != 1)
-			failed("wrong count: "+count);
-		passed();
-	});
+	b_set(b_get()+1);
+	// check result
+	await delay();
+	expect(count).toEqual(2);
+	expect(c.x).toEqual(13);
+	c.assert();
 });
 // basic reactive proxy
-add("reactive proxy", (passed, failed) => {
+test("reactive proxy", async () => {
 	let v = [1,2,4,3];
 	let p = new ReactiveProxy(v);
 	let count = 0;
 	p.subscribe(() => count++);
 	p.value.sort();
-	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count: "+count);
-		passed();
-	});
+	await delay();
+	expect(count).toEqual(1);
 });
 // deep reactive proxy
-add("deep reactive proxy", (passed, failed) => {
+test("deep reactive proxy", async () => {
 	let v = {arr:[0,1],obj:{prop:0}};
 	let p = new ReactiveProxy(v, true);
 	let count = 0;
 	p.subscribe(() => count++);
 	p.value.obj.prop++;
-	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count: "+count);
-		passed();
-	})
+	await delay();
+	expect(count).toEqual(1);
 });
 // deep reactive proxy failure case
-add("deep reactive proxy failure", (passed, failed) => {
+test("deep reactive proxy failure", () => {
 	let val = {a:{val:10}, b:{val:5}};
 	let rp = new ReactiveProxy(val, true);
 	let count = 0;
@@ -204,22 +241,18 @@ add("deep reactive proxy failure", (passed, failed) => {
 	let cached = p.a; // orphaned proxy
 	p.a = p.b; // first change
 	p.a.val++; // second change
-	if (count != 2)
-		failed("wrong count");
+	expect(count).toEqual(2);
 	// ideally, this wouldn't trigger another notify
 	cached.val++;
-	if (count != 3)
-		failed("wrong count, orphaned");
+	expect(count).toEqual(3);
 	// but we can deproxy it and should work
 	cached = ReactiveProxy.deproxy(cached)
 	cached.val++;
-	if (count != 3)
-		failed("wrong count, deproxied");
+	expect(count).toEqual(3);
 	// we expect it to have the wrong value
-	passed();
 });
 // test recursive microtask (uses RecursiveQueue)
-add("recursive microtask", (passed, failed) => {
+test("recursive microtask", async () => {
 	let r = new ReactiveValue(0);
 	let count = 0;
 	r.subscribe(() => {
@@ -230,29 +263,23 @@ add("recursive microtask", (passed, failed) => {
 	// should run after all recursive microtasks
 	r.subscribe(() => {
 		count++;
-		if (r.value !== 3)
-			failed("microtasks didn't run before:"+r.value);
+		expect(r.value).toEqual(3);
 	}, "timeout");
 	r.value++;
-	setTimeout(() => {
-		if (count !== 4)
-			failed("wrong count:"+count);
-		passed();
-	}, 10);
+	await delay(10);
+	expect(count).toEqual(4);
 });
 // test flush
-add("flush", (passed, failed) => {
+test("flush", () => {
 	let r = new ReactiveValue(0);
 	let count = 0;
 	r.subscribe(() => count++);
 	r.value++;
 	AutoQueue.flush(false);
-	if (count != 1)
-		failed("wrong count");
-	passed();
+	expect(count).toEqual(1);
 });
 // this tests that the Queue.count dirty optimization in Reactive.notify works
-add("queue optimization", (passed, failed) => {
+test("queue optimization", async () => {
 	let r1 = new ReactiveValue(0);
 	let r2 = new ReactiveValue(0);
 	let count = 0;
@@ -274,14 +301,11 @@ add("queue optimization", (passed, failed) => {
 	});
 	// step #1 trigger reactive flow; count 0->1
 	r1.value++;
-	setTimeout(() => {
-		if (count !== 3)
-			failed("wrong count: "+count);
-		passed();
-	});
+	await delay();
+	expect(count).toEqual(3);
 });
 // test non-autoqueue subscribe
-add("non-autoqueue", (passed, failed) => {
+test("non-autoqueue", async () => {
 	const mine = new MicrotaskQueue();
 	let r1 = new ReactiveValue(0);
 	let r2 = new ReactiveValue(0);
@@ -293,16 +317,13 @@ add("non-autoqueue", (passed, failed) => {
 	r1.value++;
 	r2.value++;
 	mine.flush(false);
-	if (a !== 1)
-		failed("manual queue not flushed");
-	setTimeout(() => {
-		if (a !== 1 || b !== 1)
-			failed("wrong counts");
-		passed();
-	}, 10);
+	expect(a).toEqual(1);
+	await delay(10);
+	expect(a).toEqual(1);
+	expect(b).toEqual(1);
 });
 // subscribe options: default queue
-add("default queue", (passed, failed) => {
+test("default queue", async () => {
 	const r = new ReactiveValue(0);
 	const old = Reactive.subscribe_defaults.queue;
 	Reactive.subscribe_defaults.queue = AutoQueue("timeout",10);
@@ -311,18 +332,15 @@ add("default queue", (passed, failed) => {
 	Reactive.subscribe_defaults.queue = old;
 	r.subscribe(() => b++);
 	r.value++;
-	setTimeout(() => {
-		if (a != 0 || b != 1)
-			failed(`wrong queues probably: ${a}, ${b}`);
-	},5);
-	setTimeout(() => {
-		if (a != 1 || b != 1)
-			failed("wrong counts")
-		passed();
-	},15);
+	await delay(5);
+	expect(a).toEqual(0);
+	expect(b).toEqual(1);
+	await delay(10);
+	expect(a).toEqual(1);
+	expect(b).toEqual(1);
 });
 // subscribe options: queue syntaxes
-add("queue syntaxes", (passed, failed) => {
+test("queue syntaxes", async () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	r.subscribe(() => count++, AutoQueue("timeout"));
@@ -342,111 +360,94 @@ add("queue syntaxes", (passed, failed) => {
 	r.subscribe(() => count++);
 	r.value++;
 	// make sure they're all queud on timeout queue
-	queueMicrotask(() => {
-		if (count !== 1)
-			failed("wrong count");
-	})
-	setTimeout(() => {
-		if (count !== 15)
-			failed("wrong count");
-		passed();
-	},5)
+	await delay_microtask();
+	expect(count).toEqual(1);
+	await delay(5);
+	expect(count).toEqual(15);
 });
 // new AutoQueue should reference the same queue on backend
-add("new autoqueue", (passed, failed) => {
+test("new autoqueue", () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	r.subscribe(() => count++, ["timeout",4]);
 	r.value++;
 	(new AutoQueue("timeout",4)).flush();
-	if (count != 1)
-		failed("wrong count:"+count);
-	passed();
+	expect(count).toEqual(1);
 });
 // flush while in notifying loop should do nothing
-add("nonrecursive flush", (passed, failed) => {
+test("nonrecursive flush", async () => {
 	const r = new ReactiveValue(0);
 	let a = 0, b = 0;
 	r.subscribe(() => {
 		a++;
 		AutoQueue().flush(false);
-		if (a !== 1 || b !== 0)
-			failed("wrong count after flush");
+		// wrong count after flush?
+		expect(a).toEqual(1);
+		expect(b).toEqual(0);
 	});
 	r.subscribe(() => b++);
 	r.value++;
-	setTimeout(() => {
-		if (a !== 1 || b !== 1)
-			failed("wrong counts");
-		passed();
-	});
+	await delay();
+	expect(a).toEqual(1);
+	expect(b).toEqual(1);
 });
 // forcing flush while in notifying loop
-add("recursive flush", (passed, failed) => {
+test("recursive flush", async () => {
 	const r = new ReactiveValue(0);
 	let a = 0, b = 0;
 	r.subscribe(() => {
 		a++;
 		AutoQueue().flush(true);
-		if (a !== 1 || b !== 1)
-			failed("wrong count after flush");
+		// wrong count after flush?
+		expect(a).toEqual(1);
+		expect(b).toEqual(1);
 	});
 	r.subscribe(() => b++);
 	r.value++;
-	setTimeout(() => {
-		if (a !== 1 || b !== 1)
-			failed("wrong counts");
-		passed();
-	});
+	await delay();
+	expect(a).toEqual(1);
+	expect(b).toEqual(1);
 });
 // subscriber notified when first subscribes
-add("first notify", (passed, failed) => {
+test("first notify", async () => {
 	const r = new ReactiveValue(0);
 	let x = 0;
 	r.subscribe(() => x |= 0b1, {notify:false});
 	r.subscribe(() => x |= 0b10, {notify:true});
 	r.subscribe(() => x |= 0b100, {notify:null});
 	r.subscribe(() => x |= 0b1000, {notify:"sync"});
-	if (x !== 0b1100)
-		failed("sync notify wrong");
-	setTimeout(() => {
-		if (x !== 0b1110)
-			failed("wrong bits")
-		passed();
-	});
+	// sync notify wrong?
+	expect(x).toEqual(0b1100);
+	await delay();
+	expect(x).toEqual(0b1110);
 });
 // test that default subscribe notify option works
-add("default first notify", (passed, failed) => {
+test("default first notify", () => {
 	const r = new ReactiveValue(0);
 	let x = 0;
 	let old = Reactive.subscribe_defaults.notify;
 	Reactive.subscribe_defaults.notify = "sync";
 	r.subscribe(() => x++);
 	Reactive.subscribe_defaults.notify = old;
-	if (x !== 1)
-		failed("default not used")
-	passed();
+	// default not used?
+	expect(x).toEqual(1);
 });
 // return bound unsubscribe function from subscribe
-add("return unsubscribe", (passed, failed) => {
+test("return unsubscribe", async () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	const unsubscribe = r.subscribe(() => count++, {unsubscribe: true});
 	r.value++;
-	setTimeout(() => {
-		if (count !== 1)
-			failed("first notify failed");
-		// now try unsubscribe
-		r.value++;
-		unsubscribe();
-		setTimeout(() => {
-			if (count !== 1)
-				failed("wrong count");
-			passed();
-		});
-	});
+	await delay();
+	// first notify failed?
+	expect(count).toEqual(1);
+	// now try unsubscribe
+	r.value++;
+	unsubscribe();
+	await delay();
+	expect(count).toEqual(1);
 });
-add("default unsubscribe", (passed, failed) => {
+test("default unsubscribe", async () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	let old = Reactive.subscribe_defaults.unsubscribe;
@@ -455,14 +456,12 @@ add("default unsubscribe", (passed, failed) => {
 	Reactive.subscribe_defaults.unsubscribe = old;
 	r.value++;
 	unsubscribe();
-	setTimeout(() => {
-		if (count !== 0)
-			failed("didn't unsubscribe")
-		passed();
-	});
+	await delay();
+	// didn't unsubscribe?
+	expect(count).toEqual(0);
 });
 // check all TrackingSubscriber args/pass options
-add("tracking subscriber", (passed, failed) => {
+test("tracking subscriber", done => {
 	const a = new ReactiveValue(0);
 	let b_fetches
 	const b = new ReactiveAccessor(() => {
@@ -472,41 +471,47 @@ add("tracking subscriber", (passed, failed) => {
 	const c = new ReactiveValue(0);
 	const deps = [a,b,c];
 	let count = 0;
+	let already_done = false;
 	function cbk(amode, pmode, arg_count, ...args){
-		count++;
-		// convert all to array of flat arguments
-		switch (pmode){
-			case "expand":
-				if (args.length !== arg_count)
-					failed("bad expand signature");
-				break;
-			case "single":
-				if (arg_count == 1){
-					if (args.length !== 1 || Array.isArray(args[0]))
-						failed("bad single signature");
+		try{
+			count++;
+			// convert all to array of flat arguments
+			switch (pmode){
+				case "expand":
+					//bad expand signature?
+					expect(args).toHaveLength(arg_count);
 					break;
-				}
-			// otherwise, same as array
-			case "array":
-				if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length != arg_count)
-					failed("bad array signature");
-				args = args[0];
-				break;
-		}
-		// verify types
-		switch (amode){
-			case "deps":
-				for (let i=0; i<args.length; i++)
-					if (args[i] !== deps[i])
-						failed("wrong deps arg: "+i);
-				break;
-			case "vals":
-			case "cache":
-				for (let i=0; i<args.length; i++){
-					if (args[i] !== deps[i].value)
-						failed("wrong vals arg: "+i);
-				}
-				break;
+				case "single":
+					if (arg_count == 1){
+						// bad single signature
+						expect(args).toHaveLength(1);
+						expect(Array.isArray(args[0])).toBe(false);
+						break;
+					}
+				// otherwise, same as array
+				case "array":
+					//bad array signature
+					expect(args).toHaveLength(1);
+					expect(args[0]).toBeInstanceOf(Array);
+					expect(args[0]).toHaveLength(arg_count);
+					args = args[0];
+					break;
+			}
+			// verify types
+			switch (amode){
+				case "deps":
+					for (let i=0; i<args.length; i++)
+						expect(args[i]).toEqual(deps[i]);
+					break;
+				case "vals":
+				case "cache":
+					for (let i=0; i<args.length; i++)
+						expect(args[i]).toEqual(deps[i].value);
+					break;
+			}
+		}catch(err){
+			already_done = true;
+			done(err);
 		}
 	}
 	let expected_count = 0;
@@ -534,104 +539,150 @@ add("tracking subscriber", (passed, failed) => {
 	a.value += 1;
 	c.value += 8;
 	setTimeout(() => {
+		if (already_done)
+			return;
 		// check that cache worked for b.value, which was unchanged
-		if (b_fetches !== expected_b_fetches)
-			failed(`cache mode not working: ${b_fetches}, expected ${expected_b_fetches}`);
-		if (count !== expected_count)
-			failed("wrong count");
-		passed();
+		try{
+			expect(b_fetches).toEqual(expected_b_fetches);
+			expect(count).toEqual(expected_count);
+		}catch(err){
+			done(err);
+			return;
+		}
+		done();
 	});
 });
 // unsubscribe from tracking subscriber should remove as an argument
-add("tracking subscriber unsubscribe", (passed, failed) => {
+test("tracking subscriber unsubscribe", done => {
 	let count = 0;
 	const a = new ReactiveValue(0);
 	const b = new ReactiveValue(10);
 	const c = new ReactiveValue(20);
 	const deps = [a,b,c];
+	let already_done = false;
 	const t = new TrackingSubscriber((...args) => {
 		count++;
-		if (args.length !== deps.length)
-			failed("wrong arg count");
-		for (let i=0; i<args.length; i++)
-			if (args[i] !== deps[i])
-				failed("wrong ")
+		// wrong arg count?
+		try{
+			expect(args.length).toEqual(deps.length);
+			for (let i=0; i<args.length; i++)
+				expect(args[i]).toEqual(deps[i])
+		}catch(err){
+			done(err);
+			already_done = true;
+		}
 	}, "deps", "expand");
 	for (const dep of deps)
 		dep.subscribe(t);
 	a.value++;
 	setTimeout(() => {
+		if (already_done)
+			return;
 		deps.splice(1,1);
 		b.unsubscribe(t);
 		a.value++;
 		setTimeout(() => {
-			if (count != 2)
-				failed("wrong count");
-			passed();
+			try{
+				expect(count).toEqual(2);
+			}catch(err){
+				done(err);
+				return;
+			}
+			done();
 		});
 	});
 });
-add("tracking subscribe option", (passed, failed) => {
+test("tracking subscribe option", done => {
 	const r = new ReactiveValue(0);
 	let count = 0;
+	let already_done = false;
 	r.subscribe((v) => {
 		count++;
-		if (r !== v)
-			failed("not correct")
+		try{
+			expect(r).toEqual(v);
+		}catch(err){
+			done(err);
+			already_done = true;
+		}
 	}, {tracking:["deps","expand"]})
 	r.value++;
 	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count");
-		passed();
+		if (already_done)
+			return;
+		try{
+			expect(count).toEqual(1);
+		}catch(err){
+			done(err);
+			return;
+		}
+		done();
 	})
 });
 // subscribe_defaults.tracking works
-add("tracking default subscribe", (passed, failed) => {
+test("tracking default subscribe", done => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	let old = Reactive.subscribe_defaults.tracking;
 	Reactive.subscribe_defaults.tracking = ["deps","expand"];
+	let already_done = false;
 	r.subscribe((v) => {
 		count++;
-		if (r !== v)
-			failed("not correct")
+		try{
+			expect(r).toEqual(v);
+		}catch(err){
+			done(err);
+			already_done = true;
+		}
 	})
 	Reactive.subscribe_defaults.tracking = old;
 	r.value++;
 	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count");
-		passed();
+		if (already_done)
+			return;
+		try{ expect(count).toEqual(1); }
+		catch(err){ return done(err); }
+		done();
 	})
 });
+// if tracking is non-array, it pulls from TrackingSubscriber.defaults
+test("tracking unspecified subscribe", async () => {
+	let count = 0;
+	const r = new ReactiveValue(0);
+	r.subscribe((arr) => {
+		expect(Array.isArray(arr)).toBe(true);
+		expect(arr[0]).toBe(r);
+		count++
+	}, {tracking:true});
+	r.value++;
+	await delay();
+	expect(count).toBe(1);
+});
 // TrackingSubscriber defaults
-add("tracking subscriber defaults", (passed, failed) => {
+test("tracking subscriber defaults", done => {
 	const r = new ReactiveValue(0);
 	let count = 0;
 	let old = TrackingSubscriber.defaults;
 	TrackingSubscriber.defaults = ["vals","expand"];
+	let already_done = false;
 	r.subscribe(new TrackingSubscriber((v) => {
 		count++;
-		if (r.value !== v)
-			failed("not correct")
+		try{ expect(r.value).toEqual(v); }
+		catch(err){
+			already_done = true;
+			done(err);
+		}
 	}));
 	TrackingSubscriber.defaults = old;
 	r.value++;
 	setTimeout(() => {
-		if (count != 1)
-			failed("wrong count");
-		passed();
+		if (already_done)
+			return;
+		try{ expect(count).toEqual(1); }
+		catch(err){ return done(err); }
+		done();
 	})
 });
-
-
-/* TODO:
-	- queue limit
-	- idle time slicing
-	- proxy with private properties
-*/
-
-// run(["reactive proxy"]); // single
-run(null, false); // serial
-// run(null, true); // parallel
+test("tracking subscriber keyword error", () => {
+	expect(() => new TrackingSubscriber(() => {}, "values")).toThrow(/unknown keyword/i);
+	expect(() => new TrackingSubscriber(() => {}, "vals","arr")).toThrow(/unknown keyword/i);
+})

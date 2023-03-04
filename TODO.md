@@ -1,0 +1,12 @@
+- wrapper interface
+	- proxy wrapper
+- mass subscribe
+- temporary queue mode override when setting a value
+- derived
+	- lazy derived
+- interface with Svelte
+- allow deadline logic for queues besides idle
+- maybe non-recursive versions of microtask/tick/promise?
+- priority queue
+- priority queue with dependency graph analysis
+- compiler for statically known dependency graphs
