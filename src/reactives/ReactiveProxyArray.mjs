@@ -1,4 +1,4 @@
-import { Reactive, ReactiveProxy } from "../Reactive.mjs";
+import { ReactiveProxy } from "../Reactive.mjs";
 
 /** Coerces a value to be an integer, as described here:
  * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number#integer_conversion
