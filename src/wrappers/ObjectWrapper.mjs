@@ -16,7 +16,7 @@ const wrappable_conf = {
 /** Creates a new ObjectWrapper which wraps an existing Object. This allows you to wrap values
  * that are non-configurable. It also stores defualt wrapper values for properties
  */
-export default function ObjectWrapper(root, ...config){
+export function ObjectWrapper(root, ...config){
 	const obj = Object.create(root);
 	attach_config(obj, ...config);
 	// in case they want to inject as wrappable later on
@@ -137,3 +137,4 @@ Object.assign(ObjectWrapper, {
 		delete root[keys.prop_index];
 	}
 });
+export default ObjectWrapper;

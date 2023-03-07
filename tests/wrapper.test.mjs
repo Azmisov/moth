@@ -1,7 +1,5 @@
 import jest from "jest-mock";
-import { ReactiveAccessor, ReactiveProxy, ReactiveValue } from "../src/Reactive.mjs";
-import wrappable from "../src/wrappable.mjs";
-import ObjectWrapper from "../src/wrappers/ObjectWrapper.mjs";
+import { wrappable, ObjectWrapper, ReactiveAccessor, ReactiveProxy, ReactiveValue } from "../src/moth.mjs";
 
 function delay(time){
 	return new Promise(resolve => {

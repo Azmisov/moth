@@ -3,42 +3,90 @@
  * @module wrapper
  */
 import { keys, wrappable } from "./wrappable.mjs";
-import { ReactiveValue, ReactiveProxy, ReactiveAccessor } from "./Reactive.mjs";
+import { ReactiveValue } from "./Reactive.mjs";
+import { ReactiveAccessor, ReactiveProxy } from "./reactives/barrel.mjs";
 export { keys, wrappable };
 
 /** Figures out which object in the prototype chain owns the property, and fetches the property
  * descriptor; if property is not defined, it assumes one will be defined with [[Set]] as a data
- * descriptor with default behavior/options
+ * descriptor with default behavior/options. Warning, this function doesn't automatically look at
+ * constructors' `prototype` property, which is not part of the prototype chain
  * @param {object} root object to search for `property`
  * @param {string} property property name to search for
  */
 export function get_property(root, property){
-	let desc;
 	let proto = root;
-	while (true){
-		// not yet defined
-		if (proto === null){
-			// this is the default [[Set]] behavior, but note it could be overriden for some objects
-			desc = {
-				value: undefined,
-				writable: true,
-				enumerable: true,
-				configurable: true
+	do {
+		const desc = Object.getOwnPropertyDescriptor(proto, property);
+		if (desc){
+			return {
+				root,
+				owner: proto,
+				property,
+				data: "writable" in desc,
+				...desc
 			};
-			proto = root;
-			break;
 		}
-		desc = Object.getOwnPropertyDescriptor(proto, property);
-		if (desc !== undefined)
-			break;
 		proto = Object.getPrototypeOf(proto);
-	}
+	} while (proto);
+	// not yet defined
+	// this is the default [[Set]] behavior, but note it could be overriden for some objects
 	return {
-		root, property,
-		owner: proto,
-		data: "writable" in desc,
-		...desc
+		root,
+		owner: root,
+		property,
+		data: true,
+		value: undefined,
+		writable: true,
+		enumerable: true,
+		configurable: true
 	};
+}
+
+/** Same as {@link get_property}, but can search multiple roots and properties simultaneously.
+ * @param {object[]} roots list of objects to search for properties; the first root whose prototype
+ * 	chain contains a property will be used
+ * @param {string[]} props list of properties to search for
+ */
+export function get_properties(roots, props){
+	props = new Set(props);
+	const descs = {};
+	done: for (const root of roots){
+		let proto = root;
+		do{
+			for (const prop of props){
+				const desc = Object.getOwnPropertyDescriptor(proto, prop);
+				if (!desc) continue;
+				props.delete(prop);
+				descs[prop] = {
+					root,
+					owner: proto,
+					property: prop,
+					data: "writable" in desc,
+					...desc
+				};
+			}
+			if (!props.size)
+				break done;
+			proto = Object.getPrototypeOf(proto);
+		} while (proto);
+	}
+	// not yet defined
+	const root = roots[0];
+	for (const prop of props){
+		// this is the default [[Set]] behavior, but note it could be overriden for some objects
+		descs[prop] = {
+			root,
+			owner: root,
+			property: prop,
+			data: true,
+			value: undefined,
+			writable: true,
+			enumerable: true,
+			configurable: true
+		};
+	}
+	return descs;
 }
 
 /** Analyzes a property definition and creates an appropriate default Reactive value.

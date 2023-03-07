@@ -1,30 +1,9 @@
-import ReactiveProxy from "./ReactiveProxy.mjs";
-
-/** Coerces a value to be an integer, as described here:
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number#integer_conversion
- * @private
- */
-function toInt(v){
-	v = Math.trunc(+v);
-	return isNaN(v) || v === -0 ? 0 : v;
-}
-/** Indexing conversion for many array methods */
-function toIndex(v, l){
-	v = toInt(v);
-	return v < 0 ? Math.max(0, v + l) : v;
-}
+import { ReactiveProxy } from "../Reactive.mjs";
 
 /** A special reactive type optimized for Array. It can also be used for any Array-like object,
  * with a `length` property and integer keys.
  */
-export default class ReactiveProxyArray extends ReactiveProxy{
-	static mutating = [
-		"pop", "push", "shift", "unshift", "splice", "copyWithin", "fill", "reverse", "sort"
-	];
-	static iterating = new Set([
-		"every", "filter", "find", "findIndex", "findLast", "findLastIndex", "flatMap", "forEach",
-		"group", "groupToMap", "map", "reduce", "reduceRight", "some"
-	]);
+export class ReactivePropertyProxy extends ReactiveProxy{
 
 	/**
 	 * @param {*} value 

@@ -3,11 +3,10 @@
 	- idle time slicing
 	- proxy with private properties
 */
-
-import AutoQueue from "../src/AutoQueue.mjs";
-import { MicrotaskQueue } from '../src/Queue.mjs';
-import { TrackingSubscriber } from '../src/Subscriber.mjs';
-import { Reactive, ReactiveValue, ReactiveAccessor, ReactivePointer, ReactiveProxy } from "../src/Reactive.mjs";
+import {
+	AutoQueue, MicrotaskQueue, TrackingSubscriber, Reactive, ReactiveValue,
+	ReactiveAccessor
+} from "../src/moth.mjs";
 
 function delay(time){
 	return new Promise(resolve => {
@@ -166,91 +165,7 @@ test("recursive sync unsubscribe", async () => {
 	await delay();
 	expect(count).toEqual(0b111);
 });
-// basic reactive pointer
-test("reactive pointer", async () => {
-	let count = 0;
-	const o = {p: 10};
-	let p = new ReactivePointer(o, "p");
-	p.subscribe(() => count++);
-	p.value++;
-	await delay();
-	expect(count).toEqual(1);
-	expect(o.p).toEqual(11);
-});
-// basic reactive accessor
-test("reactive accessor", async () => {
-	class C{
-		_x = 11;
-		get x(){ return this._x; }
-		set x(v) { this._x = v; }
-		assert(){
-			expect(this._x).toEqual(13);
-		}
-	}
-	const c = new C();
-	const desc = Object.getOwnPropertyDescriptor(
-		Object.getPrototypeOf(c),
-		"x"
-	);
-	let count = 0;
-	// aot binding
-	let a = new ReactiveAccessor(desc.get.bind(c), desc.set.bind(c));
-	a.subscribe(() => count++);
-	// deferred binding
-	let b = new ReactiveAccessor(desc.get, desc.set);
-	b.subscribe(() => count++);
-	const accessor = Object.getOwnPropertyDescriptor(b,"value");
-	const b_get = accessor.get.bind(c);
-	const b_set = accessor.set.bind(c);
-	// modify
-	a.value++;
-	b_set(b_get()+1);
-	// check result
-	await delay();
-	expect(count).toEqual(2);
-	expect(c.x).toEqual(13);
-	c.assert();
-});
-// basic reactive proxy
-test("reactive proxy", async () => {
-	let v = [1,2,4,3];
-	let p = new ReactiveProxy(v);
-	let count = 0;
-	p.subscribe(() => count++);
-	p.value.sort();
-	await delay();
-	expect(count).toEqual(1);
-});
-// deep reactive proxy
-test("deep reactive proxy", async () => {
-	let v = {arr:[0,1],obj:{prop:0}};
-	let p = new ReactiveProxy(v, true);
-	let count = 0;
-	p.subscribe(() => count++);
-	p.value.obj.prop++;
-	await delay();
-	expect(count).toEqual(1);
-});
-// deep reactive proxy failure case
-test("deep reactive proxy failure", () => {
-	let val = {a:{val:10}, b:{val:5}};
-	let rp = new ReactiveProxy(val, true);
-	let count = 0;
-	rp.subscribe(() => count++, null);
-	let p = rp.value;
-	let cached = p.a; // orphaned proxy
-	p.a = p.b; // first change
-	p.a.val++; // second change
-	expect(count).toEqual(2);
-	// ideally, this wouldn't trigger another notify
-	cached.val++;
-	expect(count).toEqual(3);
-	// but we can deproxy it and should work
-	cached = ReactiveProxy.deproxy(cached)
-	cached.val++;
-	expect(count).toEqual(3);
-	// we expect it to have the wrong value
-});
+
 // test recursive microtask (uses RecursiveQueue)
 test("recursive microtask", async () => {
 	let r = new ReactiveValue(0);

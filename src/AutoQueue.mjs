@@ -37,7 +37,7 @@ function reap(force=false){
  *  batched and each unique timeout requires an additional queue
  * @constructor
  */
-export default function AutoQueue(mode="microtask", timeout=-1){
+export function AutoQueue(mode="microtask", timeout=-1){
 	const qid = mode+timeout;
 	// already created AutoQueue with same qid; override object creation and return old ref
 	const exists = queues.get(qid);
@@ -164,3 +164,4 @@ Object.assign(AutoQueue.prototype, {
 		return this.get().dequeue(subscriber);
 	}
 });
+export default AutoQueue;
