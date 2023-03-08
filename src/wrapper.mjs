@@ -47,10 +47,10 @@ export function get_property(root, property){
  * @param {object[]} roots list of objects to search for properties; the first root whose prototype
  * 	chain contains a property will be used
  * @param {string[]} props list of properties to search for
+ * @param {object} descs optional object to output results to
  */
-export function get_properties(roots, props){
+export function get_properties(roots, props, descs={}){
 	props = new Set(props);
-	const descs = {};
 	done: for (const root of roots){
 		let proto = root;
 		do{

@@ -1,6 +1,6 @@
 import jest from "jest-mock";
 import {
-	ReactiveAccessor, ReactivePointer, ReactiveProxy, ReactivePropertyWrapper,
+	ReactiveAccessor, ReactivePointer, ReactiveProxy, ReactiveWrapper,
 	ReactiveMap
 } from "../src/moth.mjs";
 
@@ -100,7 +100,7 @@ test("deep reactive proxy failure", () => {
 	expect(count).toEqual(3);
 	// we expect it to have the wrong value
 });
-test("basic reactive property wrapper", async () => {
+test.only("basic reactive property wrapper", async () => {
 	class X{
 		x = 5
 		set y(v){ this._y = v; }
@@ -108,7 +108,7 @@ test("basic reactive property wrapper", async () => {
 		z(){ this._y *= Math.sqrt(this.x); }
 	}
 	const x = new X();
-	const r = new ReactivePropertyWrapper(x, {generic:["x","y","z"]});
+	const r = new ReactiveWrapper(x, ["x","y","z"]);
 	const s = jest.fn();
 	r.subscribe(s, "sync");
 	r.value.x++;
@@ -119,7 +119,7 @@ test("basic reactive property wrapper", async () => {
 	expect(s).toHaveBeenCalledTimes(4);
 	const y = new X();
 });
-test.only("basic reactive map", async () => {
+test("reactive map", async () => {
 	const m = new Map();
 	const r = new ReactiveMap(m);
 	const s = jest.fn();
@@ -132,4 +132,16 @@ test.only("basic reactive map", async () => {
 	r.value.delete("y")
 	r.value.clear();
 	expect(s).toHaveBeenCalledTimes(4);
+
+	// safe to call others?
+	let sum = 0;
+	r.value.set("y",10);
+	if (r.value.has("y") && r.value.size == 1){
+		sum = r.value.get("y");
+		r.value.forEach(k => r.value.set(k,11));
+		for (const [k,v] of r.value)
+			sum += v;
+	}
+	expect(sum).toEqual(21)
+	expect(s).toHaveBeenCalledTimes(6);
 });
