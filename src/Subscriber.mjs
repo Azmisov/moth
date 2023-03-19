@@ -164,17 +164,20 @@ export class Subscriber{
 	}
 	/** Queue asynchronous notification of this subscriber, e.g. in response to a change to a
 	 * dependency
-	 * @param {Link} link The async link whose {@link Link#dep} has changed, and whose
-	 * 	{@link Link#queue} the subscriber notification should be queued on.
-	 * @protected
+	 * @param {Link | Queue | AutoQueue} link The async link whose {@link Link#dep} has changed, and
+	 *  whose {@link Link#queue} the subscriber notification should be queued on. You can also
+	 *  provide a queue to enqueue on directly, e.g. for hard-coded reactive dependencies.
 	 */
 	enqueue(link){
-		// link was already dirty, no need to queue again
-		if (link.dirty)
-			return;
-		link.dirty = true;
-		// add to new queue mode
-		const queue = link.queue;
+		let queue;
+		if (link instanceof Link){
+			// link was already dirty, no need to queue again
+			if (link.dirty)
+				return;
+			link.dirty = true;
+			queue = link.queue;
+		}
+		else queue = link;
 		const qid = queue.qid;
 		if (!(qid in this.queued)){
 			// Since we want to allow users to pass in a queue, rather than always using AutoQueue,

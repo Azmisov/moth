@@ -100,7 +100,7 @@ test("deep reactive proxy failure", () => {
 	expect(count).toEqual(3);
 	// we expect it to have the wrong value
 });
-test.only("basic reactive property wrapper", async () => {
+test("basic reactive property wrapper", async () => {
 	class X{
 		x = 5
 		set y(v){ this._y = v; }

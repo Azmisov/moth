@@ -140,6 +140,9 @@ that can be flushed together.
 You can mix different modes. The earliest notification dequeues the subscriber from any other
 queues.
 
+You can manually enqueue a subscriber by calling Subscriber.enqueue. This allows you to use a mixture
+of Reactive driven dependencies and hard-coded dependencies.
+
 This library guarantees:
 - A subscriber will only be notified when one of its dependencies has changed
 - After unsubscribing, any pending notifications are discarded
