@@ -6,10 +6,16 @@ those interested in learning more about the internals, or contributing to the pr
 <table>
 	<tr>
 		<th>{@link Reactive}</th>
-		<td>A wrapper around a JavaScript value. When the value is modified</td>
+		<td>
+			A transparent wrapper around a JavaScript value. Modifications to the wrapper will
+			notify subscribers the value has changed.
+		</td>
 	</tr>
 	<tr>
-		<th>Subscriber</th>
+		<th>{@link Subscriber}</th>
+		<td>
+			A
+		</td>
 	</tr>
 	<tr>
 		<th>Queue</th>

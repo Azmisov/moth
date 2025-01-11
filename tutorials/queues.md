@@ -39,6 +39,7 @@ rd.subscribe(heavy_computation, null);
 for (let i=0; i<50; i++)
 	rd.value += reduce_arr[i];
 ```
+
 If a queue is specified, the subscriber will instead be notified *asynchronously*. Asynchronous
 notifications are automatically batched, so changes to multiple dependencies, or many changes to
 a single dependency will only trigger one notification. Assuming recursive changes are also

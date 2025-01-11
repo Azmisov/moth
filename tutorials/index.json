@@ -6,5 +6,6 @@
 	"reactive": { "title": "Basic reactive types" },
 	"deep_reactivity": { "title": "Deep reactivity" },
 	"queues": { "title": "Specifying a queue" },
-	"wrapping": { "title": "Wrapping existing code" }
+	"wrapping": { "title": "Wrapping existing code" },
+	"architecture": { "title": "Moth architecture" }
 }
