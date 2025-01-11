@@ -14,7 +14,7 @@ const wrappable_conf = {
 	}
 };
 /** Creates a new ObjectWrapper which wraps an existing Object. This allows you to wrap values
- * that are non-configurable. It also stores defualt wrapper values for properties
+ * that are non-configurable. It also stores default wrapper values for properties
  */
 export function ObjectWrapper(root, ...config){
 	const obj = Object.create(root);
