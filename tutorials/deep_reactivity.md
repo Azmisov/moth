@@ -21,14 +21,15 @@ class Greeting{
 	set planet(value){
 		this._planet = value;
 		this.changed.notify();
-	}	
+	}
 	toString(){
-		return `Dear ${this.name}, Hello ${this.message}!`;
+		return `Dear ${this.name}, Hello ${this.planet}!`;
 	}
 }
 ```
 We store a single {@link ReactiveValue} to encapsulate all changes to the object. Each of the methods (in this case, the
-settors of some accessor properties), calls its {@link Reactive#notify} method.
+settors of some accessor properties), calls its {@link Reactive#notify} method. Dependents can subscribe to the `chnaged`
+reactive to know if any of the class's values have changed.
 
 ### Using ReactiveProxy
 
@@ -48,7 +49,7 @@ r.value.message += " world!";
 Deep reactivity:
 ```js
 const data = {child:{counter:0}};
-const r = new ReactiveProxy(data, true);
+const r = new ReactiveProxy(data, true); // the second arg indicates "deep"
 r.value.child.counter++;
 ```
 
@@ -75,7 +76,7 @@ child.counter++;
 // but this is not
 let counter = r.value.child.counter;
 counter++;
-``` 
+```
 
 References to the proxy will continue to be reactive for the lifetime of the variable. In the event you want to
 "deproxy" the value to detach it from the reactive wrapper, there is a method {@link ReactiveProxy.deproxy} which does
@@ -90,6 +91,7 @@ const child_raw = ReactiveProxy.deproxy(child_proxy);
 ```
 
 ### Working with native types
+
 You can use {@link ReactiveProxy} to wrap special native types like `Array`:
 ```js
 const arr = [1,2,3,5,7,11,13];
@@ -131,6 +133,7 @@ noticeably slower at 1000 elements, and unbearably slow at 10k elements! Suffice
 for arrays is only recommended for smaller lengths.
 
 ### Using ReactiveProxyArray
+
 Given the slowness in using the generic {@link ReactiveProxy} for arrays, as illustrated in the previous section, there
 is another proxy type available optimized specifically for Array-like objects: {@link ReactiveProxyArray}. This class
 wraps the mutating array methods, like `push` or `shift`, and calls {@link Reactive#notify} at the end of each. Recall

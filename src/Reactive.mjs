@@ -121,12 +121,13 @@ export class Reactive{
 	 * call this at the end of a CRUD method.
 	 */
 	notify(){
+		const a = this.async, s = this.sync;
 		// queue async first, since they could be called synchronously in a recursive notify;
 		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
 		// cases, e.g. no sync calls, no new subscriptions, no queues flushed
-		if (this.async.length && this.dirty !== Queue.calls){
+		if (a.length && this.dirty !== Queue.calls){
 			this.dirty = Queue.calls;
-			for (const link of this.async)
+			for (const link of a)
 				link.enqueue();
 		}
 		/* For sync, we have to deal with recursive calls. We could queue all but the first and let
@@ -144,29 +145,30 @@ export class Reactive{
 			stack unwinds, all unvisited sync links are now clean, as they've been handled by the
 			recursive notify. To implement this, we'll use a shared iterator variable sync_iter.
 		*/
-		const sl = this.sync.length;
+		const sl = s.length;
 		if (sl){
 			// recursive notifies could end up calling async, not just from this value; there are
 			// some things you can do to narrow the bounds, but I don't think it is worth it
 			Queue.called();
 			// all but first we need to track if still dirty before running
+			const si = this.sync_iter;
 			if (sl > 1){
 				for (let i=1; i<sl; i++)
-					this.sync[i].dirty = true;
+					s[i].dirty = true;
 				// set iter vars before first sync call, since first may unsubscribe;
 				// any new sync subscribers will be clean, hence bounds on length
-				this.sync_iter.reset(1, sl);
+				si.reset(1, sl);
 			}			
-			let link = this.sync[0];
+			let link = s[0];
 			link.call();
 			if (sl > 1){
-				for (; this.sync_iter.i<this.sync_iter.stop; this.sync_iter.i++){
-					link = this.sync[this.sync_iter.i];
+				for (; si.i<si.stop; si.i++){
+					link = s[si.i];
 					if (link.dirty)
 						link.call();
 				}
 				// forces any recursive loops further up stack to exit, since all links are clean now
-				this.sync_iter.reset();
+				si.reset();
 			}
 		}
 	}
@@ -212,13 +214,14 @@ export class Reactive{
 	 *  be returned instead.
 	 */
 	subscribe(subscriber, opts={}){
+		const defaults = this.subscribe_defaults || Reactive.subscribe_defaults;
 		// opts can just be queue option
 		if (!opts || opts.constructor !== Object)
 			opts = {queue: opts};
 		if (!(subscriber instanceof Subscriber))
-			subscriber = Subscriber.attach(subscriber, opts.tracking ?? Reactive.subscribe_defaults.tracking);
+			subscriber = Subscriber.attach(subscriber, opts.tracking ?? defaults.tracking);
 		// check if already subscribed;
-		// infrequent, so we just do a linear search
+		// infrequent and usually few items, so we just do a linear search
 		if (Link.findSubscriber(this.sync, subscriber) !== -1 || Link.findSubscriber(this.async, subscriber) !== -1)
 			throw Error("Already subscribed");
 		// get the subscriber queue
@@ -239,12 +242,11 @@ export class Reactive{
 		}
 		else if ("mode" in opts)
 			queue = AutoQueue(opts.mode, opts.timeout ?? -1);
-		else queue = Reactive.subscribe_defaults.queue;
+		else queue = defaults.queue;
 		// add subscriber
 		const link = new Link(subscriber, queue);
 		if (!queue){
-			this.sync.push(link);
-			if (!this.sync_iter)
+			if (this.sync.push(link) > 1 && !this.sync_iter)
 				this.sync_iter = new SynchronousIterator();
 		}
 		else{
@@ -254,7 +256,7 @@ export class Reactive{
 		}
 		subscriber.subscribe(this, link);
 		// first notify
-		const notify = "notify" in opts ? opts.notify : Reactive.subscribe_defaults.notify;
+		const notify = "notify" in opts ? opts.notify : defaults.notify;
 		if (notify !== false){
 			// sync (possibly forced)
 			if ((notify === null || notify === "sync") || !queue){
@@ -265,7 +267,7 @@ export class Reactive{
 			else link.enqueue();
 		}
 		// return value
-		if (opts.unsubscribe || Reactive.subscribe_defaults.unsubscribe)
+		if (opts.unsubscribe ?? defaults.unsubscribe)
 			return this.unsubscribe.bind(this, subscriber);
 		return this.sync.length + this.async.length;
 	}

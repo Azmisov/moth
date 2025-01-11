@@ -1,4 +1,4 @@
-import { ReactiveValue } from "../ReactiveValue.mjs";
+import { ReactiveValue } from "../Reactive.mjs";
 
 /** Same as ReactiveValue, but checks the current value for strict equality before setting */
 export class ReactiveCache extends ReactiveValue{

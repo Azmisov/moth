@@ -1,9 +1,12 @@
 ## Queues
+
 You can control how a subscriber is notified by specifying a *queue*:
+
 ```js
 // subscriber's notifications are queued on the microtask queue:
 r.subscribe(subscriber, "microtask");
 ```
+
 No queue (`null`) indicates *synchronous* notification. These subscribers are notified immediately
 when a value changes. While this provides the strongest guarantees about the program's state, it
 has disadvantages:
