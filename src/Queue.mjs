@@ -108,7 +108,7 @@ export class Queue{
 			this.sid = null;
 		}
 	}
-	/** Synchronously flush the queue, rather than waiting for any async schedule callback to run 
+	/** Synchronously flush the queue, rather than waiting for any async schedule callback to run
 	 * @param {boolean} recursive If called while the queue is still looping through and notifying
 	 * 	subscribers, should we resume the loop (true) or do nothing (false); set to true if calling
 	 * 	from a subscriber and you want to force the queue to flush immediately
@@ -175,7 +175,7 @@ export class Queue{
  * @memberof Queue
  * @param {number} sid same as {@link Queue#sid}; passed for convenience, as many builtin
  * 	methods follow this signature (e.g. `setTimeout` or `cancelAnimationFrame`)
- */	
+ */
 
 /** Uses a double buffer of subscribers for notification. Also supports an `IdleDeadline` to pause
  * notifications if a deadline has passed. You may use this as a basic reusable "manual" queue, if
@@ -287,7 +287,7 @@ export class MicrotaskQueue extends RecursiveQueue{
 /** Called as a microtask from the runtime's promise microtask queue. While exact behavior is not
  * standardized, it will most likely behave like a lower priority microtask queue. This uses
  * `Promise.resolve()` internally.
- * 
+ *
  * Note that the subscribers notifications are *scheduled* inside a promise. If the subscriber
  * notification is itself an async function, calling it will not execute immediately, but place it
  * back onto the runtime's native promise microtask queue.
@@ -327,7 +327,7 @@ export class MessageQueue extends BufferedQueue{
 /** Called as a new task, which runs on a subsequent event loop iteration. Many runtimes enforce a
  * minimum delay internally (e.g. ~4ms), so there's no guarantee a zero delay will run on the next
  * event loop iteration. This uses `setTimeout` internally.
- * 
+ *
  * This queue can be used to throttle notifications to fire at most once for a specified time
  * interval. Note however that the timeout begins when the first subscriber is queued, so when
  * used as a shared queue you can't guarantee a minimum delay since the value changed. Rather,

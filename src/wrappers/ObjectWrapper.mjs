@@ -53,8 +53,23 @@ function object_unwrap_single(prop, unwrap){
 	else delete prop.root[prop.property];
 }
 Object.assign(ObjectWrapper, {
+	/**
+	 *
+	 * @param {Object} root The object whose properties we want to wrap to make reactive
+	 * @param {string | Symbol} property Property to be wrapped
+	 * @param {*} wrappable
+	 * @param  {...any} args Extra arguments to pass to the wrappable constructor or function
+	 * @returns
+	 */
 	wrap(root, property, wrappable, ...args){
-		// ensure index
+		/* Steps to wrap an object's property to make it reactive:
+			- fetch original property descriptor
+			- raise error if property is nonconfigurable; user will need to create wrapper around the
+			  object or class instead, e.g. ObjectWrapper(myobj)
+			-
+
+		*/
+		// ensure index; the index is a dictionary of
 		let index = root[keys.prop_index];
 		if (index){
 			// already attached?
@@ -64,7 +79,7 @@ Object.assign(ObjectWrapper, {
 		}
 		// determine property descriptor
 		const prop = get_property(root, property);
-		// need to be able to overwrite it; they can use n
+		// need to be able to overwrite it
 		if (root === prop.owner && !prop.configurable)
 			throw TypeError(`Cannot wrap own non-configurable property ${prop.property}; consider wrapping object in an ObjectWrapper`);
 		// wrap the value

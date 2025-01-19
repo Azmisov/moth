@@ -33,7 +33,7 @@ export class ReactiveProxy extends Reactive{
 					reactive.a = other
 					cache += 10
 				Here cache is still a proxy attached to reactive, but it has been implicitly
-				detached by being overriden by other. 
+				detached by being overriden by other.
 			*/
 			this._handler = {
 				set(target, property, value, receiver){
@@ -43,6 +43,7 @@ export class ReactiveProxy extends Reactive{
 					return ret;
 				},
 				get(target, key, receiver){
+					// special keys we use for deproxying or introspection
 					if (key === ReactiveProxy.owner)
 						return that;
 					if (key === ReactiveProxy.target)
@@ -51,9 +52,10 @@ export class ReactiveProxy extends Reactive{
 					let val;
 					if (native){
 						val = target[key];
+						// function, force it not to go through proxied [[Set]]
 						if (val instanceof Function)
-							return function (...args){
-								return val.apply(this === receiver ? target : this, args);
+							return function (){
+								return val.apply(this === receiver ? target : this, arguments);
 							};
 					}
 					else val = Reflect.get(...arguments);
@@ -75,6 +77,7 @@ export class ReactiveProxy extends Reactive{
 					return ret;
 				},
 				get(target, key, receiver){
+					// special keys we use for deproxying or introspection
 					if (key === ReactiveProxy.owner)
 						return that;
 					if (key === ReactiveProxy.target)
@@ -83,12 +86,14 @@ export class ReactiveProxy extends Reactive{
 					let val;
 					if (native){
 						const val = target[key];
+						// function, force it not to go through proxied [[Set]]
 						if (val instanceof Function)
-							return function (...args){
-								return val.apply(this === receiver ? target : this, args);
+							return function (){
+								return val.apply(this === receiver ? target : this, arguments);
 							};
 					}
 					else val = Reflect.get(...arguments);
+					// unlike deep, we don't return a proxy of the nested value
 					return val;
 				}
 			};

@@ -1,19 +1,5 @@
 import ReactiveProxy from "./ReactiveProxy.mjs";
 
-/** Coerces a value to be an integer, as described here:
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number#integer_conversion
- * @private
- */
-function toInt(v){
-	v = Math.trunc(+v);
-	return isNaN(v) || v === -0 ? 0 : v;
-}
-/** Indexing conversion for many array methods */
-function toIndex(v, l){
-	v = toInt(v);
-	return v < 0 ? Math.max(0, v + l) : v;
-}
-
 /** A special reactive type optimized for Array. It can also be used for any Array-like object,
  * with a `length` property and integer keys.
  */
@@ -27,17 +13,17 @@ export default class ReactiveProxyArray extends ReactiveProxy{
 	]);
 
 	/**
-	 * @param {*} value 
+	 * @param {*} value
 	 * @param {boolean} [optimized=true] Use optimized versions of `mutating` methods, which check
 	 *  that the array has actually been modified before notifying subscribers. Array operations are
-	 * 	very slightly slower due to the checks, but can be worth it due to less false notifications. 
+	 * 	very slightly slower due to the checks, but can be worth it due to less false notifications.
 	 * @param {boolean} [safe_iterating=false] When fetching `iterating` methods, whether to call
 	 *  them using the Proxy. The iterating methods pass a reference to the array to the callback.
 	 *  Setting this to false will be faster, as it won't have to go through the Proxy interface,
 	 *  but potentially less safe as the callback could call additional methods on the non-proxied
 	 *  array reference.
 	 */
-	
+
 	build_handler(optimized=true, safe_iterating=false){
 		const that = this;
 		let overrides = {};
@@ -86,7 +72,7 @@ export default class ReactiveProxyArray extends ReactiveProxy{
 					const target_idx = toIndex(target, l);
 					const start_idx = toIndex(start, l);
 					const end_idx = args.length ? Math.min(l, toIndex(args[0], l)) : l;
-					const notify = target_idx < l && start_idx < l && end_idx > start_idx && target_idx !== start_idx; 
+					const notify = target_idx < l && start_idx < l && end_idx > start_idx && target_idx !== start_idx;
 					Array.prototype.copyWithin.apply(this, arguments);
 					if (notify)
 						that.notify();
@@ -139,6 +125,7 @@ export default class ReactiveProxyArray extends ReactiveProxy{
 				return ret;
 			},
 			get(target, key, receiver){
+				// special keys we use for deproxying or introspection
 				if (key === ReactiveProxy.owner)
 					return that;
 				if (key === ReactiveProxy.target)

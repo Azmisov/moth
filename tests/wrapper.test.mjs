@@ -102,7 +102,7 @@ test("autoreactive", async () => {
 			c: {
 				configurable:true,
 				writable:true,
-				value: 7	
+				value: 7
 			}, // value, can overwrite
 		});
 	}
@@ -196,7 +196,7 @@ test("unwrap", async () => {
 	rb.subscribe(() => count++);
 	o.a++;
 	o.b++;
-	
+
 	await delay();
 	expect(count).toEqual(2);
 	expect(o.b).toEqual(10);
@@ -224,7 +224,7 @@ test("objectwrapper unwrap", async () => {
 	let count = 0;
 	rc.subscribe(() => count++);
 	o.a.c += 3
-	
+
 	await delay();
 	// make sure wrapped correctly
 	expect(count).toEqual(1);
@@ -316,7 +316,7 @@ accessor doesn't work as raw reactive?
 	prototype.
 
 	What about the same but with data values, will those operate on the prototype? E.g.
-		ObjectWrapper.wrap(obj, "data", ReactiveValue) 
+		ObjectWrapper.wrap(obj, "data", ReactiveValue)
 		a = Object.create(obj)
 		b = Object.create(obj)
 		a.data++;

@@ -11,7 +11,7 @@ export const keys = {
 	 * @see attach_config
 	 */
 	config: Symbol("wrapper_config"),
-	/** Wrappable interface definition
+	/** Holds the wrappable interface definition for an instance or class type
 	 * @see wrappable
 	 */
 	wrappable: Symbol("wrappable"),

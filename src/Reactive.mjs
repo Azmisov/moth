@@ -27,7 +27,7 @@ class SynchronousIterator{
  * and their associated metadata, and handles notifying these subscribers when the value changes.
  * Derived classes should implement: the {@link Reactive#value} accessor, {@link Reactive#assume},
  * and {@link Reactive#unwrap}.
- * 
+ *
  * The base class is {@link module:wrappable#wrappable|wrappable}, with a sensible default that
  * should work for most subclasses. It is wrapped as an accessor that forwards to
  * {@link Reactive#value}. Unwrapping the value will unsubscribe all subscribers, and then call
@@ -90,7 +90,7 @@ export class Reactive{
 	get value(){ throw Error("Not implemented"); }
 	set value(value){ throw Error("Not implemented"); }
 	/** Set the value without notifying any subscribers, e.g. assuming the value was always thus
-	 * @param value the updated value 
+	 * @param value the updated value
 	 * @abstract
 	 */
 	assume(value){ throw Error("Not implemented"); }
@@ -99,12 +99,20 @@ export class Reactive{
 	 * @abstract
 	 */
 	unwrap(){ throw Error("Not implemented"); }
-	
+
 	/** Update the value by applying a transformation function. This will notify subscribers.
 	 * @param {function} transform This is passed the current value, and should return the new,
 	 * 	transformed value
 	 */
 	update(transform){ this.value = transform(this.value); }
+	/** Continuously update the value with the output of an async generator. This will queue
+	 * a notification for each generated value
+	 * @param {AsyncGenerator} generator The generator to pull values from
+	 */
+	async stream(generator){
+		for await (const value of generator)
+			this.value = value;
+	}
 	/** Set the value, notifying subscribers. You may also use `reactive.value = value`
 	 * @param value the updated value
 	 * @see Reactive#value
@@ -158,7 +166,7 @@ export class Reactive{
 				// set iter vars before first sync call, since first may unsubscribe;
 				// any new sync subscribers will be clean, hence bounds on length
 				si.reset(1, sl);
-			}			
+			}
 			let link = s[0];
 			link.call();
 			if (sl > 1){
@@ -177,7 +185,7 @@ export class Reactive{
 	 * @typedef {object} Reactive~SubscribeOptions
 	 * @property {null | Queue | AutoQueue | string | any[]} queue If `null` or `"sync"`, the
 	 *  subscriber will be notified synchronously.
-	 * 
+	 *
 	 *  All other options give async notifications. If
 	 *  you don't pass either a {@link Queue} or {@link AutoQueue}, the option specifies arguments
 	 *  to pass to {@link AutoQueue}. This can be a single `mode` argument, or tuple `[mode,
@@ -263,7 +271,7 @@ export class Reactive{
 				Queue.called();
 				link.call();
 			}
-			// async 
+			// async
 			else link.enqueue();
 		}
 		// return value
@@ -337,7 +345,7 @@ export default Reactive;
  * ```js
  * const r = new ReactiveValue("Hello");
  * r.value += " world!";
- * ``` 
+ * ```
  * @extends Reactive
  */
 export class ReactiveValue extends Reactive{

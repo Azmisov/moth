@@ -1,5 +1,3 @@
-## Queues
-
 You can control how a subscriber is notified by specifying a *queue*:
 
 ```js
@@ -66,13 +64,6 @@ are available:
 
 <table>
   <tr>
-    <th><code>tick</code></th>
-    <td>
-      <i>(NodeJS only)</i> Notified on the next tick via <code>process.nextTick</code>. This behaves
-      like a higher priority <code>microtask</code>
-    </td>
-  </tr>
-  <tr>
     <th><code>microtask</code></th>
     <td>
       Notified as a microtask via <code>queueMicrotask</code>, which runs immediately after
@@ -82,8 +73,14 @@ are available:
   <tr>
     <th><code>promise</code></th>
     <td>
-      Notified as a promise via <code>Promise.resolve</code>. This behaves like a lower
-      priority <code>microtask</code>
+      Notified as a promise via <code>Promise.resolve</code>. The promise queue is resolved as
+      a microtask, so the timing will be nearly identical to microtask notifications
+    </td>
+  </tr>
+  <tr>
+    <th><code>tick</code></th>
+    <td>
+      <i>(NodeJS only)</i> Notified on the next event loop tick via <code>process.nextTick</code>
     </td>
   </tr>
   <tr>
@@ -110,7 +107,7 @@ are available:
   <tr>
     <th><code>animation</code></th>
     <td>
-      Notified as a task triggered from <code>requestAnimationFrame</code>. The notification will
+      <i>(Browser only)</i> Notified as a task triggered from <code>requestAnimationFrame</code>. The notification will
       occur right before the browser repaints, which is typically 30 or 60fps. When running in a
       background tab, repaints may be deferred indefinitely. This mode supports an optional deadline
       that forces notification after the deadline timer has expired.
@@ -119,10 +116,12 @@ are available:
   <tr>
     <th><code>idle</code></th>
     <td>
-      Notified as a task triggered from <code>requestIdleCallback</code>. This is fired only when the
-      browser is <i>idle</i>, having no other tasks to perform. Like <code>animation</code>, it can be delayed
-      indefinitely, so supports a deadline parameter. Unlike the other modes, the <code>idle</code> notification
-      will pause intermittently if it cannot finish within a runtime defined time slice.
+      <i>(Browser only)</i> Notified as a task triggered from <code>requestIdleCallback</code>. This is
+      fired only when the browser is <i>idle</i>, having no other tasks to perform. Like <code>animation</code>,
+      it can be delayed indefinitely, so supports a deadline parameter. Unlike the other modes, the
+      <code>idle</code> notification will pause intermittently if it cannot finish within a runtime
+      defined time slice. Depending on how much load the browser is under this can run faster or
+      slower than animation frames.
     </td>
   </tr>
   <tr>
