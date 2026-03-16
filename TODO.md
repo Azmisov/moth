@@ -53,6 +53,7 @@
   common use cases that would result in large speedup from this.
 - Some kind of pausable queue or subgraph? E.g. use case is where we want to temporarily pause
   some updates while mouse is dragging, and as soon as its released, update
+- Interface with other frameworks. See if there are some simple recipes that can be applied.
 
 wrapMany syntax: ObjectWrapper.wrap(obj, [props]) -> {prop: reactive, ...}
 
@@ -71,7 +72,6 @@ Old notes, don't remember exactly what these were for:
 - temporary queue mode override when setting a value
 - derived
 	- lazy derived
-- interface with Svelte
 - ReactivePropertyProxy, old file I copied from ReactiveProxyArray. I'm not sure what the idea
   was for this one. Maybe intended to be like ReactiveWrapper, where we can easily pass in
   a config to customize the ReactiveProxy handlers for a subclass?

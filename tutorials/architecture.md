@@ -56,8 +56,6 @@ reactive, computed, cell
 - *Function which runs when a dependency changes*: effect, observer, subscriber, watch
 - *Function which transforms a reactive value*: derived, computed, operator, memo
 
-When reactive values get modified recursively, a lot of people call this a "side effect".
-
 **React**:
 
 - *Hook* is a reactive type. React only provides one low level type, the rest are high level
@@ -102,6 +100,7 @@ When reactive values get modified recursively, a lot of people call this a "side
 - updates happen synchronously by default; async can be enabled which runs on each tick
 - input signals:
   - *signal* makes a signal
+  - *store* is a proxied object, where every recursive value is lazily initialized signal
 - transforming signals:
   - *memo* same as `createEffect` but outputs a signal that can be used downstream
   - *resource* when a source signal changes, it runs a function; optimized API for "resources",
@@ -109,6 +108,21 @@ When reactive values get modified recursively, a lot of people call this a "side
 - output signals (input is reactive):
   - *effect* tracks dependencies synchronously and reruns when they change; can't track through
     async code
+
+Some of my complaints after using it:
+- No builtin two-way binding for inputs; e.g. <input value={signal}> you'd like to just work, but
+  instead you have to do register your own onInput handler, and then there a bunch of quirks where
+  if onInput does filtering/transformation, the state gets decoupled from the value
+- Passing a signal vs static value to child component is not transparent. You'd like the child to
+  be completely unaware of upstream reactivity and it just works. But instead you have to treat
+  the option of static vs signal separately. Ideally you could access and modify as props.val or
+  props.val += x and it just works, either if props.val is a static value or if its a reactive proxy.
+  - Actually you can have it be transparently reactive, but only if the parent resolves the reactive.
+    E.g passes signal() not signal. Child might be able to do effects still, but can't manipulate
+	the value directly.
+- Having [signal, setSignal] decoupled increases overhead; e.g. passing signal to child component
+  you need to pass two values intead of a single object
+- Difference between onClick and on:click is not self-evident from naming, have to memorize
 
 **Svelte**:
 
@@ -163,6 +177,20 @@ When reactive values get modified recursively, a lot of people call this a "side
 - *computed* is a signal which automatically tracks sync dependencies as it runs
 - proposal has a bunch of internal implementation details it forces on the user
 
+**Sinuous**:
+
+**Hyperactiv**:
+
+**Reactivily**:
+
+**maverick-js/signals**:
+
+**MobX**:
+
+**Preact**:
+
+**CellX**:
+
 
 ### Goal: Separate reactivity from state
 
@@ -200,6 +228,33 @@ type.
   state (e.g. flush notifications to guarantee all reactive dependencies are updated).
 - Guarantee subscribers are only notified once when a value changes
 - Guarantee subscribers are only notified when subscribed
+
+### Goal: Minimal primitive vocabulary
+
+Other frameworks split reactivity into three or more distinct concepts the user must choose
+between: React has `useState` vs `useMemo` vs `useEffect`; Solid has `createSignal` vs
+`createMemo` vs `createEffect`; Vue has `ref` vs `computed` vs `watch` vs `watchEffect`. These
+categories are somewhat arbitrary and add cognitive overhead — the user must decide "is this a
+computed or an effect?" when the real question is just "what does this depend on and when should
+it run?"
+
+Moth has two primitives:
+
+1. **Reactive** — a value you can read and subscribe to
+2. **Subscriber** — a function that runs when its dependencies change
+
+Everything else is configuration of these two, not a separate concept:
+
+- A "ref" / "signal" is a ReactiveValue
+- A "computed" / "memo" is a ReactiveComputed (a Reactive whose getter is a memoized function)
+- An "effect" is a Subscriber with no output reactive
+- A "derived" is a ReactiveComputed that nothing subscribes to (pure pull)
+- A "watch" is a Subscriber on a specific queue
+
+The only meaningful axis is how a reactive gets its value: set externally (`set()`) or derived
+from a function (getter). Even that is a spectrum — ReactiveComputed supports manual override
+via `set()`/`assume()`. The user doesn't need to pick the right primitive; they configure a
+reactive to behave the way they want.
 
 ### Goal: First-class JavaScript interface
 
@@ -373,6 +428,14 @@ notification guarantees will remain constant. E.g. DOM manipulation will always 
 the `animation` queue; I can't think of cases off the top of my head where they wouldn't belong
 to the same queue.
 
+### Autotracking dependencies
+
+This is pretty simple to implement. Store a reference to the current subscriber that is being
+called. When function returns, reset it to null. It only works for synchronous subscribers, because
+only NodeJS supports async context. Can store list of accessed and modified reactives. I was
+thinking array since almost always < 10 values; can use dirty counter on each reactive to indicate
+whether it has been tracked for gets vs sets.
+
 
 ## Wrapper
 
@@ -442,7 +505,7 @@ microtask, animation, idle, and timeout... still quite a few options for schedul
 
 To handle recursive reactivity, my idea is to give each clock tick a priority and trigger flushes
 for all notifications <= the current clock tick's priority. For example, if you have an animation
-effect that has microtask side effects, the idea is to run the microtasks during the animation tick.
+effect that has microtask effects, the idea is to run the microtasks during the animation tick.
 Based on timing results, I'm defining the priorities as:
 
 1. sync
@@ -505,9 +568,25 @@ When will a subsriber/effect be notified of a change?
 
 This means that recursive `animation` effects will run during the current animation frame, rather
 than the next. It also means `microtask` or `timout(500)` effects may run before their next clock
-tick. This allows recursive side-effects of differing clock tick priorities to complete in a single
+tick. This allows recursive notifications of differing clock tick priorities to complete in a single
 tick, rather than being spread out across many. In addition to efficiency, it prevents from having
 janky, half-updated user interfaces due to staggered updates across multiple animation frames.
+
+I considered treating all subscribers in one big priority queue, where it is ordered first by tick
+priority (e.g. microtask before animation). This means that if we're flushing animation, we
+immediately notify of recursive microtask, instead of going through all animation first, then loop
+back through and flush microtask etc. The idea is that an animation task needs some microtask
+computations finished before its own task can finish, maybe ending with another animation task
+afterwards. So why not just have that full chain run at once, rather than delaying and running
+microtask at the end? However, after thinking I've decided that the more important aspect of doing
+async notifications is batching them. If we are immediately flushing recursive microtask notifies,
+we don't give any chance for them to get batched.
+
+The biggest guarantee we want is simply that if a queue is flushed, all the higher priority queues
+are also emptied with it. The ordering in which that happens probably isn't mission critical to
+anything. FIFO, or another well-defined ordering within each queue makes sense. But across different
+queues, like microtask vs animation it doesn't. They're triggered by separate clock signals anyways.
+So given that, any ordering is okay. The ordered, batched method seems sensible within that.
 
 I want to add the ability to make separate queues which can be paused/resumed. Paired with the
 enforcement of one queue per subscriber, this means a queue can encapsulate all the values in a
@@ -515,9 +594,39 @@ graph and pause/resume that graph. The clock tick and flushing logic should stil
 perhaps we can have a *Scheduler* class and a *Queue* class. Scheduler manages scheduling clock
 ticks, and flushing the appropriate unpaused queues.
 
-In v1.0 I had a feature to forcibly flush a queue after some deadline has been reached. This was
+In v1.0 I had a feature to forcibly flush a queue after some timeout has been reached. This was
 just enabled for animation, but I considered adding it to all the others too. However, considering
 the timing test results, the only case this would ever be needed is for animation and idle; idle
-already supports it natively. And now that I think of it I don't think enabling it for animation
-is actually that useful.
+already supports it natively. I think for animation it could be useful, but probably rarer than
+I originally thought. Main thought was so DOM could be forcibly updated even if user is not
+actively looking at the page, and so animations are paused. But do we really want to force DOM
+updates in that case? Maybe not. I'll leave that feature in the TODO until I have settled on
+a decision there.
+
+### Pull-based notification
+
+Pull based means we don't immediately run derived/computed subscribers when a value changes.
+Instead we wait until its value is fetched by another. I think by default you really only want
+side-effect free, computed reactives to be pull based.
+
+### Topological queue sorting
+
+The graph of modifications comes from the subscriber. Each subscriber has a list of input and
+output reactives. For a *computed* subscriber, it would have one autocreated ReactiveValue output
+that is known ahead of time. All other cases we either autodetect, or specify input/outputs
+manually. The idea here is to intelligently order how subscribers are called to minimize the
+amount of times a subscriber gets called and "glitches". I wonder if the overhead in doing
+intelligent ordering actually improves things that much. I think its more important for DOM
+changes, where you don't want the DOM updated twice very quickly, if it can be avoided.
+
+Common way of implementing this is at runtime I think. When a value changes, we mark
+1) direct children as dirty
+2) indirect descendants as maybe dirty (e.g. it might not change if value is memoized and doesn't change)
+Then before running a subscriber, we first resolve any dirty / maybe dirty values it depends on.
+
+Ordering should only be guaranteed w.r.t lower priority clock ticks within the same queue. E.g.
+microtask won't wait for animation dependency to get updated to run. There might be some
+optimizations possible specifically because of this. E.g., for deep graphs, we can stop marking
+children/descendants when we see a different priority barrier. Would need to work out how it would
+work exactly.
 
