@@ -25,7 +25,11 @@ function timeoutToInt(v) {
 
 /** Base interface for all clock signals. A clock represents a single timing primitive
  * (e.g. microtask, animation frame, setTimeout) that can schedule an async flush callback.
- * Clocks are not instantiated directly — use the concrete subclasses or {@link getClock}.
+ * Clocks are not instantiated directly — use {@link Scheduler#getClock}.
+ *
+ * All clock constructors take a {@link RankedQueue} as first argument. The clock builds its
+ * `onflush` and `schedule` functions in the constructor, binding to the queue for zero-overhead
+ * dispatch.
  * @interface
  */
 /**
@@ -47,18 +51,16 @@ function timeoutToInt(v) {
  * @static
  */
 /**
- * Whether this clock's async callback is currently scheduled
+ * Whether this clock's async callback is currently scheduled. The Clock manages setting/resetting
+ * the flag when schedule/unscheduled; consumers should only use this flag to know when to call
+ * schedule/unschedule.
  * @name Clock#scheduled
  * @type {boolean}
  * @default false
  */
 /**
- * Bound function to call when the clock fires. Set by the scheduler
- * @name Clock#onflush
- * @type {?function}
- */
-/**
- * Schedule the clock's async callback
+ * Schedule the clock's async callback. Created in the constructor as a bound function
+ * for zero-overhead dispatch.
  * @name Clock#schedule
  * @function
  */
@@ -81,10 +83,18 @@ export class MicrotaskClock {
 	static mask = MicrotaskClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
-	schedule() {
-		this.scheduled = true;
-		queueMicrotask(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = MicrotaskClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			queueMicrotask(onflush);
+		};
 	}
 }
 
@@ -97,10 +107,18 @@ export class PromiseClock {
 	static mask = MicrotaskClock.mask | PromiseClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
-	schedule() {
-		this.scheduled = true;
-		Promise.resolve().then(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = PromiseClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			Promise.resolve().then(onflush);
+		};
 	}
 }
 
@@ -114,10 +132,18 @@ export class TickClock {
 	static mask = PromiseClock.mask | TickClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
-	schedule() {
-		this.scheduled = true;
-		process.nextTick(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = TickClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			process.nextTick(onflush);
+		};
 	}
 }
 
@@ -130,14 +156,24 @@ export class MessageClock {
 	static mask = TickClock.mask | MessageClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
-	constructor() {
-		this._channel = new MessageChannel();
-	}
-	schedule() {
-		this.scheduled = true;
-		this._channel.port1.onmessage = this.onflush;
-		this._channel.port2.postMessage(null);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = MessageClock.mask;
+		const channel = new MessageChannel();
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			channel.port1.onmessage = onflush;
+			channel.port2.postMessage(null);
+		};
+		this.unschedule = () => {
+			clock.scheduled = false;
+			channel.port1.onmessage = null;
+		};
 	}
 }
 
@@ -152,11 +188,19 @@ export class ImmediateClock {
 	static mask = MessageClock.mask | ImmediateClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	schedule() {
-		this.scheduled = true;
-		this._sid = setImmediate(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = ImmediateClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = setImmediate(onflush);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -174,11 +218,19 @@ export class TimeoutClock {
 	static mask = ImmediateClock.mask | TimeoutClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	schedule() {
-		this.scheduled = true;
-		this._sid = setTimeout(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = TimeoutClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = setTimeout(onflush);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -197,20 +249,27 @@ export class TimeoutDelayClock {
 	static mask = TimeoutClock.mask | TimeoutDelayClock.rank;
 	static hasTimeout = true;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	/** @param {number} timeout Delay in milliseconds; must be > 0 */
-	constructor(timeout) {
+	/** @param {RankedQueue} queue
+	 *  @param {number} timeout Delay in milliseconds; must be > 0
+	 */
+	constructor(queue, timeout) {
 		/** The delay in milliseconds for this clock
 		 * @type {number}
 		 */
 		this.timeout = timeoutToInt(timeout);
 		if (!this.timeout)
 			throw new Error("Non-zero timeout required for timeout clock");
-	}
-	schedule() {
-		this.scheduled = true;
-		this._sid = setTimeout(this.onflush, this.timeout);
+		const clock = this;
+		const mask = TimeoutDelayClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = setTimeout(onflush, clock.timeout);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -228,11 +287,19 @@ export class AnimationClock {
 	static mask = TimeoutDelayClock.mask | AnimationClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	schedule() {
-		this.scheduled = true;
-		this._sid = requestAnimationFrame(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = AnimationClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = requestAnimationFrame(onflush);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -250,20 +317,28 @@ export class IdleDelayClock {
 	static mask = AnimationClock.mask | IdleDelayClock.rank;
 	static hasTimeout = true;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	/** @param {number} timeout Fallback delay in milliseconds; must be > 0 */
-	constructor(timeout) {
+	/** @param {RankedQueue} queue
+	 *  @param {number} timeout Fallback delay in milliseconds; must be > 0
+	 */
+	constructor(queue, timeout) {
 		/** The fallback delay in milliseconds for this clock
 		 * @type {number}
 		 */
 		this.timeout = timeoutToInt(timeout);
 		if (!this.timeout)
 			throw new Error("Non-zero timeout required for idle clock");
-	}
-	schedule() {
-		this.scheduled = true;
-		this._sid = requestIdleCallback(this.onflush, {timeout: this.timeout});
+		const clock = this;
+		const mask = IdleDelayClock.mask;
+		const opts = {timeout: this.timeout};
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = requestIdleCallback(onflush, opts);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -281,11 +356,19 @@ export class IdleClock {
 	static mask = IdleDelayClock.mask | IdleClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
-	onflush = null;
 	_sid = null;
-	schedule() {
-		this.scheduled = true;
-		this._sid = requestIdleCallback(this.onflush);
+	/** @param {RankedQueue} queue */
+	constructor(queue) {
+		const clock = this;
+		const mask = IdleClock.mask;
+		const onflush = () => {
+			clock.scheduled = false;
+			queue.flush(clock, mask);
+		};
+		this.schedule = () => {
+			clock.scheduled = true;
+			clock._sid = requestIdleCallback(onflush);
+		};
 	}
 	unschedule() {
 		this.scheduled = false;
@@ -296,8 +379,8 @@ export class IdleClock {
 
 // --- Clock Registry ---
 
-/** Maps mode strings to clock classes
- * @type {Object<string, function>}
+/** Maps mode strings to non-parameterized clock classes
+ * @type {Object<string, function(new:Clock, RankedQueue)>}
  */
 export const clockClasses = {
 	microtask: MicrotaskClock,
@@ -310,47 +393,10 @@ export const clockClasses = {
 	idle: IdleClock,
 };
 
-/** Singleton clocks for non-parameterized modes
- * @private
+/** Maps mode strings to parameterized (timeout-accepting) clock classes
+ * @type {Object<string, function(new:Clock, RankedQueue, number)>}
  */
-const singletons = {};
-
-/** Parameterized clocks indexed by mode+timeout
- * @private
- */
-const parameterized = {};
-
-/** Get or create a clock for a given mode and optional timeout
- * @param {string} mode Clock mode name
- * @param {number} [timeout=-1] Timeout for parameterized clocks (timeout(N), idle(N))
- * @returns {object} A clock instance
- */
-export function getClock(mode, timeout=-1) {
-	// parameterized clock (timeout delay or idle delay)
-	if (timeout > 0) {
-		if (mode === "timeout") {
-			const key = "timeout_" + timeout;
-			let clock = parameterized[key];
-			if (!clock)
-				clock = parameterized[key] = new TimeoutDelayClock(timeout);
-			return clock;
-		}
-		if (mode === "idle") {
-			const key = "idle_" + timeout;
-			let clock = parameterized[key];
-			if (!clock)
-				clock = parameterized[key] = new IdleDelayClock(timeout);
-			return clock;
-		}
-		throw Error("Clock mode '" + mode + "' does not support a timeout parameter");
-	}
-	// singleton clock
-	let clock = singletons[mode];
-	if (!clock) {
-		const Clazz = clockClasses[mode];
-		if (!Clazz)
-			throw Error("Unknown clock mode: " + mode);
-		clock = singletons[mode] = new Clazz();
-	}
-	return clock;
-}
+export const clockDelayClasses = {
+	timeout: TimeoutDelayClock,
+	idle: IdleDelayClock,
+};
