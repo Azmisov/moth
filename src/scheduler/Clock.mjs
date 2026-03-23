@@ -3,12 +3,17 @@
  * sooner in the event loop).
  *
  * The rank is encoded as a bitmask, where each clock occupies a single bit. The mask for a clock
- * includes all higher-priority clocks' bits ORed together with its own. This allows the scheduler
- * to efficiently determine which queues to flush: flushing a clock flushes all queues whose rank
- * bit is set in the clock's mask.
+ * includes all clock ranks that should be drained when this clock flushes.
  *
- * Clocks are singletons for the deterministic ticks (microtask, promise, tick, message) and created
- * per-timeout for parameterized ticks (timeout(N), idle(N)).
+ * Clocks are organized into streams:
+ * - **Deterministic** (microtask, promise, tick, message): cascade into all streams. Every
+ *   stream's mask includes these.
+ * - **Timing** (immediate, timeout, timeout(N)): independent of animation and idle.
+ * - **Animation** (animation): independent of timing and idle.
+ * - **Idle** (idle(N), idle): independent of timing and animation.
+ *
+ * Clocks are singletons for the deterministic ticks and created per-timeout for parameterized
+ * ticks (timeout(N), idle(N)).
  */
 
 /** Coerces millisecond delay argument to a non-negative 32-bit integer
@@ -72,7 +77,7 @@ function timeoutToInt(v) {
  */
 
 // --- Deterministic Clocks ---
-// These fire in a well-defined order relative to the event loop
+// These fire in a well-defined order relative to the event loop, and cascade into all streams.
 
 /** Called as a microtask, which runs after the current task completes. This uses
  * `queueMicrotask` internally.
@@ -177,15 +182,21 @@ export class MessageClock {
 	}
 }
 
-// --- Timer-based Clocks ---
-// These fire based on timeouts or external signals; nondeterministic timing
+/** Cumulative mask for all deterministic clocks. All streams include this as their base —
+ * flushing any stream also drains all deterministic ticks.
+ * @type {number}
+ */
+export const deterministicMask = MessageClock.mask;
+
+// --- Timing Stream ---
+// immediate, timeout, timeout(N). Independent of animation and idle streams.
 
 /** Called as a new task using `setImmediate`. Currently only NodeJS supports this interface.
  * @implements Clock
  */
 export class ImmediateClock {
 	static rank = MessageClock.rank << 1;
-	static mask = MessageClock.mask | ImmediateClock.rank;
+	static mask = deterministicMask | ImmediateClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
@@ -278,13 +289,16 @@ export class TimeoutDelayClock {
 	}
 }
 
+// --- Animation Stream ---
+// Independent of timing and idle streams.
+
 /** Called before the browser repaints, typically around 30/60fps. May be delayed indefinitely
  * if the page is a background window. This uses `requestAnimationFrame` internally.
  * @implements Clock
  */
 export class AnimationClock {
 	static rank = TimeoutDelayClock.rank << 1;
-	static mask = TimeoutDelayClock.mask | AnimationClock.rank;
+	static mask = deterministicMask | AnimationClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
@@ -308,13 +322,16 @@ export class AnimationClock {
 	}
 }
 
+// --- Idle Stream ---
+// Independent of timing and animation streams.
+
 /** Called when the event loop is idle, with a timeout fallback. Each unique timeout gets its
  * own clock instance. This uses `requestIdleCallback` internally.
  * @implements Clock
  */
 export class IdleDelayClock {
 	static rank = AnimationClock.rank << 1;
-	static mask = AnimationClock.mask | IdleDelayClock.rank;
+	static mask = deterministicMask | IdleDelayClock.rank;
 	static hasTimeout = true;
 	scheduled = false;
 	_sid = null;
@@ -353,7 +370,7 @@ export class IdleDelayClock {
  */
 export class IdleClock {
 	static rank = IdleDelayClock.rank << 1;
-	static mask = IdleDelayClock.mask | IdleClock.rank;
+	static mask = deterministicMask | IdleDelayClock.rank | IdleClock.rank;
 	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
