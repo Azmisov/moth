@@ -655,3 +655,5 @@ work exactly.
 - queue overflow protection: force flush if queued is > some amount' should rarely happen, probably
   just to protect against bugs that hang the browser
 - some kind of manual queue mode, to make groups that can be flushed together
+- allowing users to bring their own queue class to be hooked in:
+  DONE: they can register a new Clock type, or override the queueClass for an existing Clock

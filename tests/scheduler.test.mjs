@@ -1,14 +1,13 @@
 import {
 	MicrotaskClock, PromiseClock, MessageClock,
-	TimeoutClock, TimeoutDelayClock, ImmediateClock,
+	TimeoutClock, TimeoutDelayClock,
 	AnimationClock, IdleDelayClock, IdleClock,
-	clockClasses
 } from "../src/scheduler/Clock.mjs";
 import {
-	Scheduler, SchedulerQueue, scheduler
+	Scheduler, SchedulerQueue
 } from "../src/scheduler/Scheduler.mjs";
+const { clockClasses } = Scheduler;
 import { ReactiveValue } from "../src/Reactive.mjs";
-import { Queue } from "../src/Queue.mjs";
 
 function delay(time){
 	return new Promise(resolve => {
