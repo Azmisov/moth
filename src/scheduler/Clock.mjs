@@ -44,15 +44,10 @@ function timeoutToInt(v) {
  * @static
  */
 /**
- * Bitmask including this clock's rank and all higher-priority clock ranks
+ * Bitmask including this clock's rank and all higher-priority clock ranks that must be flushed
+ * before this clock's subscribers can be notified.
  * @name Clock.mask
  * @type {number}
- * @static
- */
-/**
- * Whether this clock type accepts a timeout parameter
- * @name Clock.hasTimeout
- * @type {boolean}
  * @static
  */
 /**
@@ -84,9 +79,8 @@ function timeoutToInt(v) {
  * @implements Clock
  */
 export class MicrotaskClock {
-	static rank = 0b1;
+	static rank = 0b10;
 	static mask = MicrotaskClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	/** @param {RankedQueue} queue */
 	constructor(queue) {
@@ -108,9 +102,8 @@ export class MicrotaskClock {
  * @implements Clock
  */
 export class PromiseClock {
-	static rank = MicrotaskClock.rank << 1;
+	static rank = MicrotaskClock.rank << 2;
 	static mask = MicrotaskClock.mask | PromiseClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	/** @param {RankedQueue} queue */
 	constructor(queue) {
@@ -133,9 +126,8 @@ export class PromiseClock {
  * @implements Clock
  */
 export class TickClock {
-	static rank = PromiseClock.rank << 1;
+	static rank = PromiseClock.rank << 2;
 	static mask = PromiseClock.mask | TickClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	/** @param {RankedQueue} queue */
 	constructor(queue) {
@@ -157,9 +149,8 @@ export class TickClock {
  * @implements Clock
  */
 export class MessageClock {
-	static rank = TickClock.rank << 1;
+	static rank = TickClock.rank << 2;
 	static mask = TickClock.mask | MessageClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	/** @param {RankedQueue} queue */
 	constructor(queue) {
@@ -195,9 +186,8 @@ export const deterministicMask = MessageClock.mask;
  * @implements Clock
  */
 export class ImmediateClock {
-	static rank = MessageClock.rank << 1;
+	static rank = MessageClock.rank << 2;
 	static mask = deterministicMask | ImmediateClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue */
@@ -225,9 +215,8 @@ export class ImmediateClock {
  * @implements Clock
  */
 export class TimeoutClock {
-	static rank = ImmediateClock.rank << 1;
+	static rank = ImmediateClock.rank << 2;
 	static mask = ImmediateClock.mask | TimeoutClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue */
@@ -256,9 +245,8 @@ export class TimeoutClock {
  * @implements Clock
  */
 export class TimeoutDelayClock {
-	static rank = TimeoutClock.rank << 1;
+	static rank = TimeoutClock.rank << 2;
 	static mask = TimeoutClock.mask | TimeoutDelayClock.rank;
-	static hasTimeout = true;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue
@@ -297,9 +285,8 @@ export class TimeoutDelayClock {
  * @implements Clock
  */
 export class AnimationClock {
-	static rank = TimeoutDelayClock.rank << 1;
+	static rank = TimeoutDelayClock.rank << 2;
 	static mask = deterministicMask | AnimationClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue */
@@ -330,9 +317,8 @@ export class AnimationClock {
  * @implements Clock
  */
 export class IdleDelayClock {
-	static rank = AnimationClock.rank << 1;
+	static rank = AnimationClock.rank << 2;
 	static mask = deterministicMask | IdleDelayClock.rank;
-	static hasTimeout = true;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue
@@ -369,9 +355,8 @@ export class IdleDelayClock {
  * @implements Clock
  */
 export class IdleClock {
-	static rank = IdleDelayClock.rank << 1;
+	static rank = IdleDelayClock.rank << 2;
 	static mask = deterministicMask | IdleDelayClock.rank | IdleClock.rank;
-	static hasTimeout = false;
 	scheduled = false;
 	_sid = null;
 	/** @param {RankedQueue} queue */
@@ -394,12 +379,15 @@ export class IdleClock {
 	}
 }
 
-// --- Clock Registry ---
+// --- Clock Registration ---
+// Clocks register themselves on Scheduler's static maps. This avoids circular imports:
+// Clock.mjs → Scheduler.mjs (for registration + RankedTimeoutQueue), but Scheduler.mjs
+// does NOT import Clock.mjs.
 
-/** Maps mode strings to non-parameterized clock classes
- * @type {Object<string, function(new:Clock, RankedQueue)>}
- */
-export const clockClasses = {
+import { Scheduler, RankedTimeoutQueue } from "./Scheduler.mjs";
+
+// Non-parameterized clocks
+Object.assign(Scheduler.clockClasses, {
 	microtask: MicrotaskClock,
 	promise: PromiseClock,
 	tick: TickClock,
@@ -408,12 +396,12 @@ export const clockClasses = {
 	timeout: TimeoutClock,
 	animation: AnimationClock,
 	idle: IdleClock,
-};
+});
 
-/** Maps mode strings to parameterized (timeout-accepting) clock classes
- * @type {Object<string, function(new:Clock, RankedQueue, number)>}
- */
-export const clockDelayClasses = {
+// Parameterized (timeout-accepting) clocks; set queueClass for RankedTimeoutQueue routing
+TimeoutDelayClock.queueClass = RankedTimeoutQueue;
+IdleDelayClock.queueClass = RankedTimeoutQueue;
+Object.assign(Scheduler.clockDelayClasses, {
 	timeout: TimeoutDelayClock,
 	idle: IdleDelayClock,
-};
+});

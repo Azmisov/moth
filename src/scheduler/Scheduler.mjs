@@ -67,9 +67,6 @@
  *   to the v2.0 Scheduler, so existing Reactive.subscribe/Link infrastructure works without
  *   modification.
  */
-import {
-	clockClasses, clockDelayClasses
-} from "./Clock.mjs";
 import { Queue } from "../Queue.mjs";
 
 
@@ -111,9 +108,18 @@ const _maxTimeoutClock = { timeout: Infinity, constructor: { rank: -1 } };
  * Flush all queued subscribers
  * @name SchedulerInternalQueue#flush
  * @function
- * @param {Clock} clock Clock that triggered the flush (used by RankedTimeoutQueue for
- *  timeout filtering)
+ * @param {Clock} clock Clock that triggered the flush
  * @param {string | Symbol} qid Queue identifier to pass to subscriber.call()
+ */
+/**
+ * Optional: check if the queue can make progress for the given clock. If defined and returns
+ * false, the flush loop skips this queue for the current pass. Used by queues that support
+ * partial flushing (e.g. RankedTimeoutQueue only flushes sub-queues with timeout <= the
+ * triggering clock's timeout).
+ * @name SchedulerInternalQueue#canFlush
+ * @function
+ * @param {Clock} clock Clock that triggered the flush
+ * @returns {boolean}
  */
 
 
@@ -154,15 +160,13 @@ class RankedQueue {
 	 */
 	_ensureQueue(clock) {
 		const rank = clock.constructor.rank;
-		// protect against trying to queue on _maxTimeoutQueue sentinel
+		// protect against trying to queue on _maxTimeoutClock sentinel
 		if (rank < 1)
 			throw Error("Clock ranks must be strictly positive")
 		let queue = this.queues[rank];
 		if (!queue) {
-			// nested queues inside RankedTimeoutQueue will be created lazily
-			queue = this.queues[rank] = clock.constructor.hasTimeout
-				? new RankedTimeoutQueue()
-				: new FIFOQueue();
+			const Clazz = clock.constructor.queueClass || FIFOQueue;
+			queue = this.queues[rank] = new Clazz();
 		}
 		return queue;
 	}
@@ -190,49 +194,35 @@ class RankedQueue {
 	 * recursive notifications); we allow this for batching, then repeat until all queues covered by
 	 * the mask are completely empty.
 	 *
-	 * For timeout ranks, only sub-queues with timeout <= the triggering clock's timeout are
-	 * flushed. The rank may remain nonempty (higher timeout sub-queues still have subscribers), so
-	 * we track a `skipMask` to avoid looping infinitely on ranks that can't drain further.
-	 * @param {Clock} clock The clock that triggered the flush; used for timeout sub-queue routing
+	 * Queues that support partial flushing (e.g. RankedTimeoutQueue) may not fully drain. These
+	 * are tracked in `partialMask` and retried only if `queue.canFlush(clock)` returns true,
+	 * indicating new flushable work was enqueued by a subsequent flush.
+	 * @param {Clock} clock The clock that triggered the flush; used for sub-queue routing
 	 * @param {number} mask Bitmask of clock ranks to flush
 	 */
 	flush(clock, mask) {
-		// For timeout ranks, a flush may only partially drain (sub-queues with timeout >
-		// the triggering clock's timeout are left). We track these in `timeoutMask` to avoid
-		// re-flushing. A timeout rank is retried only if its minTimeout <= the triggering
-		// clock's timeout, indicating a new lower-timeout subscriber was enqueued during
-		// a subsequent flush.
-		let timeoutMask = 0;
+		// Queues that support partial flushing (via canFlush) may not fully drain. We track
+		// skipped ranks in `skipMask` to avoid infinite re-checking. After each successful
+		// flush, reset skipMask since the flush may have enqueued new work into a
+		// previously-skipped rank. The canFlush re-check on retry is cheap (heap peek).
+		let skipMask = 0;
 		while (true) {
-			const masked = this.nonemptyMask & mask & ~timeoutMask;
+			const masked = this.nonemptyMask & mask & ~skipMask;
 			if (!masked)
 				return;
 			const lowest = masked & -masked;
 			const queue = this.queues[lowest];
-			if (queue instanceof RankedTimeoutQueue) {
-				// determine timeout cutoff: use triggering clock's timeout if same rank,
-				// otherwise drain all (timeout queue has lower rank than triggering clock)
-				const flushClock = (lowest === clock.constructor.rank) ? clock : _maxTimeoutClock;
-				if (queue.minTimeout > flushClock.timeout) {
-					// nothing new to flush at this timeout level
-					timeoutMask |= lowest;
-					continue;
-				}
-				queue.flush(flushClock, this.qid);
-				// timeout queue may only partially flush, because it has some greater timeouts than
-				// requested flush rank; track this locally, since nonemptyMask is only for if all
-				// the nested queues are empty
-				if (queue.empty)
-					this.nonemptyMask &= ~lowest;
-				else
-					timeoutMask |= lowest;
+			const flushClock = (lowest === clock.constructor.rank) ? clock : _maxTimeoutClock;
+			if (queue.canFlush && !queue.canFlush(flushClock)) {
+				skipMask |= lowest;
+				continue;
 			}
-			else {
-				Queue.called();
-				queue.flush(this.qid);
-				// FIFOQueue.flush guarantees empty on return
+			queue.flush(flushClock, this.qid);
+			if (queue.empty)
 				this.nonemptyMask &= ~lowest;
-			}
+			// reset skipMask: this flush may have enqueued into a skipped rank;
+			// need to loop through all queues again and check canFlush again
+			skipMask = 0;
 		}
 	}
 }
@@ -331,7 +321,7 @@ class TimeoutHeap {
  * @implements SchedulerInternalQueue
  * @private
  */
-class RankedTimeoutQueue {
+export class RankedTimeoutQueue {
 	/** How many timeout sub-queues can exist before we start reaping empty ones
 	 * @type {number}
 	 */
@@ -357,6 +347,14 @@ class RankedTimeoutQueue {
 	 */
 	get minTimeout(){
 		return this.heap.empty ? Infinity : this.heap.peek().timeout;
+	}
+	/** Whether this queue has work that can be flushed for the given clock. Returns false
+	 * if all remaining sub-queues have timeout > the clock's timeout.
+	 * @param {Clock} clock
+	 * @returns {boolean}
+	 */
+	canFlush(clock) {
+		return this.minTimeout <= clock.timeout;
 	}
 	/** Reap empty queues. Protection for pathological cases where consumer is creating many random
 	 * timeouts, so memory doesn't grow unbounded
@@ -421,7 +419,7 @@ class RankedTimeoutQueue {
 			// flush this sub-queue; don't remove from heap before flush because
 			// recursive flush needs the heap intact to find sub-queues
 			Queue.called();
-			queue.flush(qid);
+			queue.flush(clock, qid);
 			// FIFOQueue.flush guarantees empty on return; remove from heap. Need to check presence
 			// after flush since recursive flush or dequeues could have removed it already.
 			if (queue.heapIndex !== -1)
@@ -506,9 +504,11 @@ class FIFOQueue {
 	/** Flush all queued subscribers. Handles recursive flushes from within subscribers.
 	 * After this method returns, the queue is guaranteed to be empty — all subscribers that
 	 * were pending (including any enqueued during the flush) have been called.
+	 * @param {Clock} clock Clock instance (unused by FIFOQueue, accepted for uniform interface)
 	 * @param {string | Symbol} qid Queue identifier to pass to subscriber.call()
 	 */
-	flush(qid) {
+	flush(clock, qid) {
+		Queue.called();
 		// A subscriber may call flush() recursively. Both the outer and recursive call iterate
 		// this.iter via for...of, which advances the shared iterator by calling .next(). The
 		// recursive call drains the iterator to completion; when it returns, the outer call's
@@ -545,6 +545,18 @@ class FIFOQueue {
  * system.
  */
 export class Scheduler {
+	/** Registry of non-parameterized clock classes, keyed by mode string. Clock modules
+	 * register themselves here to avoid circular imports.
+	 * @type {Object<string, function(new:Clock, RankedQueue)>}
+	 * @static
+	 */
+	static clockClasses = {};
+	/** Registry of parameterized (timeout-accepting) clock classes, keyed by mode string.
+	 * @type {Object<string, function(new:Clock, RankedQueue, number)>}
+	 * @static
+	 */
+	static clockDelayClasses = {};
+
 	/** The ranked queue holding all scheduled subscribers
 	 * @type {RankedQueue}
 	 * @private
@@ -587,9 +599,9 @@ export class Scheduler {
 		// construct a new clock if first use; the clock binds onflush and schedule in its
 		// constructor using the queue reference for zero-overhead dispatch
 		if (!clock) {
-			const Clazz = timeout > 0 ? clockDelayClasses[mode] : clockClasses[mode];
+			const Clazz = timeout > 0 ? Scheduler.clockDelayClasses[mode] : Scheduler.clockClasses[mode];
 			if (!Clazz)
-				throw Error(mode in clockClasses
+				throw Error(mode in Scheduler.clockClasses
 					? "Clock mode does not support timeouts: " + mode
 					: "Unknown clock mode: " + mode);
 			clock = timeout > 0 ? new Clazz(this.queue, timeout) : new Clazz(this.queue);
