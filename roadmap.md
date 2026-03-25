@@ -269,6 +269,36 @@ manual queue that is only flushed on demand. Revisit after the core is complete.
 
 ---
 
+### Time-based subscription primitives (throttle, debounce, rate limit)
+
+The `timeout(N)` clock defines a global periodic tick — "N ms resolution." Multiple
+subscribers batch together and cascading flush (lower timeout drains before higher) ensures
+consistency. This is correct for the "at most this stale" use case.
+
+However, there are cases where you want per-subscription timing, not a global clock:
+- **Rate limiting**: "don't call this subscriber more often than every N ms" — timer anchored
+  to the last invocation, not a global clock. A cascading flush from a lower-frequency clock
+  could trigger a rate-limited subscriber early, violating the minimum interval.
+- **Debouncing**: "only call after N ms of inactivity" — timer resets on each change.
+- **Throttling**: "call at most once per N ms, but always call on the trailing edge."
+
+These are not queue/clock concerns — they're filters on individual subscriptions. The right
+design is probably a per-Link or per-Subscriber property that suppresses notifications based
+on timing, orthogonal to which clock queue the subscriber is on:
+
+```js
+// conceptual — queue controls when, throttle controls how often
+r.subscribe(callback, { queue: "animation", throttle: 500 });
+r.subscribe(callback, { queue: "microtask", debounce: 300 });
+```
+
+**Deferral rationale:** The clock/queue system handles the common batching/resolution cases.
+Per-subscription timing is a separate feature that can be layered on top without changing the
+scheduler. Needs survey of which primitives (debounce, throttle, rate limit, others?) are
+needed and whether they belong in core or as a utility.
+
+---
+
 ### WebWorker integration
 
 Offloading heavy subscriber computations to web workers.

@@ -603,6 +603,24 @@ actively looking at the page, and so animations are paused. But do we really wan
 updates in that case? Maybe not. I'll leave that feature in the TODO until I have settled on
 a decision there.
 
+### Clock ticks vs per-subscription timing
+
+The `timeout(N)` clock defines a *resolution* contract: "notify me with at most N ms staleness."
+It is a global periodic tick. Cascading flush means `timeout(1000)` draining also drains
+`timeout(500)` — anything that wanted ≤ 1000ms resolution is satisfied. This is consistent with
+how `animation` works (frame-rate resolution) and how cross-tier flushing works (microtask drains
+before animation).
+
+This is distinct from *rate limiting*, where the intent is "don't call me more often than every
+N ms." Rate limiting is per-subscription, anchored to the last invocation, not a global clock.
+A cascading flush could violate a rate limit by triggering a subscriber earlier than its minimum
+interval. Similarly, *debouncing* ("call after N ms of inactivity") and *throttling* are
+per-subscription timing concerns, not clock/queue concerns.
+
+The design decision: clocks and queues handle batching and resolution. Per-subscription timing
+(throttle, debounce, rate limit) is a separate layer, likely a filter on the Link or Subscriber,
+orthogonal to which queue the subscriber is on.
+
 ### Pull-based notification
 
 Pull based means we don't immediately run derived/computed subscribers when a value changes.
@@ -630,3 +648,10 @@ optimizations possible specifically because of this. E.g., for deep graphs, we c
 children/descendants when we see a different priority barrier. Would need to work out how it would
 work exactly.
 
+### V1 features to port to V2
+
+- deadline for clock to flush before yielding control and waiting for next tick (e.g. idle/animation
+  in particular; the others maybe it doesn't matter as much)
+- queue overflow protection: force flush if queued is > some amount' should rarely happen, probably
+  just to protect against bugs that hang the browser
+- some kind of manual queue mode, to make groups that can be flushed together
