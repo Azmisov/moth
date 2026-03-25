@@ -6,3 +6,5 @@ export * from "./wrappable.mjs";
 export * from "./wrapper.mjs";
 export * from "./wrappers/ObjectWrapper.mjs";
 export * from "./reactives/barrel.mjs";
+export * from "./scheduler/Clock.mjs";
+export { Scheduler, scheduler, SchedulerQueue } from "./scheduler/Scheduler.mjs";
