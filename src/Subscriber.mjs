@@ -20,11 +20,11 @@ export class Link{
 	 * @type {Reactive}
 	 * @name Link#dep
 	 */
-	/** The queue the subscriber should be queued on, should the value for {@link Link#dep} change.
-	 * This will not be present for synchronous subscribers, which have no queue.
+	/** The clock that determines notification timing for this link. Not present for synchronous
+	 * subscribers. The clock holds a reference to its scheduler, accessible via `clock.scheduler`.
 	 * @memberof Link
-	 * @type {Queue | AutoQueue}
-	 * @name Link#queue
+	 * @type {Clock}
+	 * @name Link#clock
 	 */
 	/** A cache of the raw value for {@link Link#dep}. This is only present for {@link TrackingSubscriber}
 	 * @memberof Link
@@ -34,13 +34,13 @@ export class Link{
 	/** Create a new link. The members {@link Link#dep} and {@link Link#cache} are not initialized
 	 * here, and should be set manually if needed.
 	 * @param {Subscriber} subscriber
-	 * @param {?(Queue | AutoQueue)} queue
+	 * @param {?Clock} clock
 	 */
-	constructor(subscriber, queue){
+	constructor(subscriber, clock){
 		this.subscriber = subscriber;
 		// only for async links
-		if (queue)
-			this.queue = queue;
+		if (clock)
+			this.clock = clock;
 		this.dirty = false;
 	}
 	/** Indicates whether the link is dirty, meaning the value for {@link Link#dep} has changed,
@@ -59,10 +59,12 @@ export class Link{
 	 * @see Subscriber#call
 	 */
 	call(){ return this.subscriber.call();}
-	/** Queue the subscriber of this link
+	/** Queue the subscriber of this link via the clock's scheduler
 	 * @see Subscriber#enqueue
 	 */
-	enqueue(){ this.subscriber.enqueue(this); }
+	enqueue(){
+		this.subscriber.enqueue(this);
+	}
 
 	/** Search for a subscriber in a list of links
 	 * @param {Link[]} arr
@@ -163,41 +165,35 @@ export class Subscriber{
 			this.calls = Number.MIN_SAFE_INTEGER+1;
 	}
 	/** Queue asynchronous notification of this subscriber, e.g. in response to a change to a
-	 * dependency
-	 * @param {Link | Queue | AutoQueue} link The async link whose {@link Link#dep} has changed, and
-	 *  whose {@link Link#queue} the subscriber notification should be queued on. You can also
-	 *  provide a queue to enqueue on directly, e.g. for hard-coded reactive dependencies.
+	 * dependency. The link's clock determines which scheduler queue the notification goes to.
+	 * @param {Link} link The async link whose {@link Link#dep} has changed
 	 */
 	enqueue(link){
-		let queue;
-		if (link instanceof Link){
-			// link was already dirty, no need to queue again
-			if (link.dirty)
-				return;
-			link.dirty = true;
-			queue = link.queue;
-		}
-		else queue = link;
-		const qid = queue.qid;
+		// link was already dirty, no need to queue again
+		if (link.dirty)
+			return;
+		link.dirty = true;
+		const clock = link.clock;
+		const qid = clock.qid;
 		if (!(qid in this.queued)){
-			// Since we want to allow users to pass in a queue, rather than always using AutoQueue,
-			// our options are: Map (much slower than Object), ref counting Queues (O(n) dequeue),
-			// or to store a reference of the queue. The last seems the best option
-			this.queued[qid] = {count:1, queue};
-			queue.enqueue(this);
+			// our options are: Map (much slower than Object), ref counting clocks (O(n) dequeue),
+			// or to store a reference of the clock. The last seems the best option
+			this.queued[qid] = {count:1, clock};
+			clock.scheduler.enqueue(clock, this);
 		}
-		// already queued for this mode
+		// already queued for this scheduler
 		else this.queued[qid].count++;
 	}
-	/** Dequeue this subscriber from all queues it is queued in. Typical code should not need to
-	 * call this. This can be called manually, in which case you will also need to call
+	/** Dequeue this subscriber from all schedulers it is queued in. Typical code should not need
+	 * to call this. This can be called manually, in which case you will also need to call
 	 * {@link Subscriber#clean}
 	 */
 	dequeue(){
 		// multiple queues should be a fairly rare case
 		for (const qid in this.queued){
 			// guaranteed not reaped since non-empty
-			this.queued[qid].queue.dequeue(this);
+			const { clock } = this.queued[qid];
+			clock.scheduler.dequeue(clock, this);
 			delete this.queued[qid];
 		}
 	}
@@ -214,13 +210,12 @@ export class Subscriber{
 	 * @protected
 	 */
 	unsubscribe(dep, link){
-		// dequeue if needed
-		if (link.dirty && link.queue){
-			// synchronous link won't have queue
-			const qid = link.queue.qid;
+		// dequeue if needed; synchronous link won't have clock
+		if (link.dirty && link.clock){
+			const qid = link.clock.qid;
 			const v = this.queued[qid];
 			if (!--v.count){
-				v.queue.dequeue(this);
+				v.clock.scheduler.dequeue(v.clock, this);
 				delete this.queued[qid];
 			}
 		}

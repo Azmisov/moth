@@ -604,7 +604,7 @@ export class Scheduler {
 				throw Error(mode in Scheduler.clockClasses
 					? "Clock mode does not support timeouts: " + mode
 					: "Unknown clock mode: " + mode);
-			clock = timeout > 0 ? new Clazz(this.queue, timeout) : new Clazz(this.queue);
+			clock = timeout > 0 ? new Clazz(this, timeout) : new Clazz(this);
 			index[key] = clock
 		}
 		return clock;

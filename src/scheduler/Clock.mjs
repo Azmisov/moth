@@ -82,9 +82,12 @@ export class MicrotaskClock {
 	static rank = 0b10;
 	static mask = MicrotaskClock.rank;
 	scheduled = false;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = MicrotaskClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -105,9 +108,12 @@ export class PromiseClock {
 	static rank = MicrotaskClock.rank << 2;
 	static mask = MicrotaskClock.mask | PromiseClock.rank;
 	scheduled = false;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = PromiseClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -129,9 +135,12 @@ export class TickClock {
 	static rank = PromiseClock.rank << 2;
 	static mask = PromiseClock.mask | TickClock.rank;
 	scheduled = false;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = TickClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -152,9 +161,12 @@ export class MessageClock {
 	static rank = TickClock.rank << 2;
 	static mask = TickClock.mask | MessageClock.rank;
 	scheduled = false;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = MessageClock.mask;
 		const channel = new MessageChannel();
 		const onflush = () => {
@@ -190,9 +202,12 @@ export class ImmediateClock {
 	static mask = deterministicMask | ImmediateClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = ImmediateClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -219,9 +234,12 @@ export class TimeoutClock {
 	static mask = ImmediateClock.mask | TimeoutClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = TimeoutClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -249,10 +267,12 @@ export class TimeoutDelayClock {
 	static mask = TimeoutClock.mask | TimeoutDelayClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue
+	/** @param {Scheduler} sched
 	 *  @param {number} timeout Delay in milliseconds; must be > 0
 	 */
-	constructor(queue, timeout) {
+	constructor(sched, timeout) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		/** The delay in milliseconds for this clock
 		 * @type {number}
 		 */
@@ -260,6 +280,7 @@ export class TimeoutDelayClock {
 		if (!this.timeout)
 			throw new Error("Non-zero timeout required for timeout clock");
 		const clock = this;
+		const queue = sched.queue;
 		const mask = TimeoutDelayClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -289,9 +310,12 @@ export class AnimationClock {
 	static mask = deterministicMask | AnimationClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = AnimationClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
@@ -321,10 +345,12 @@ export class IdleDelayClock {
 	static mask = deterministicMask | IdleDelayClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue
+	/** @param {Scheduler} sched
 	 *  @param {number} timeout Fallback delay in milliseconds; must be > 0
 	 */
-	constructor(queue, timeout) {
+	constructor(sched, timeout) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		/** The fallback delay in milliseconds for this clock
 		 * @type {number}
 		 */
@@ -332,6 +358,7 @@ export class IdleDelayClock {
 		if (!this.timeout)
 			throw new Error("Non-zero timeout required for idle clock");
 		const clock = this;
+		const queue = sched.queue;
 		const mask = IdleDelayClock.mask;
 		const opts = {timeout: this.timeout};
 		const onflush = () => {
@@ -359,9 +386,12 @@ export class IdleClock {
 	static mask = deterministicMask | IdleDelayClock.rank | IdleClock.rank;
 	scheduled = false;
 	_sid = null;
-	/** @param {RankedQueue} queue */
-	constructor(queue) {
+	/** @param {Scheduler} sched */
+	constructor(sched) {
+		this.scheduler = sched;
+		this.qid = sched.queue.qid;
 		const clock = this;
+		const queue = sched.queue;
 		const mask = IdleClock.mask;
 		const onflush = () => {
 			clock.scheduled = false;
