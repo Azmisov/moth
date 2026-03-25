@@ -1,7 +1,7 @@
 import wrappable from "./wrappable.mjs";
-import AutoQueue from "./AutoQueue.mjs";
 import { Queue } from "./Queue.mjs";
 import { Subscriber, Link } from "./Subscriber.mjs";
+import { Scheduler, scheduler } from "./scheduler/Scheduler.mjs";
 
 /** Tracks iterator vars for sync, which can be restarted and run recursively
  * @private
@@ -37,7 +37,16 @@ class SynchronousIterator{
  * @interface
  */
 export class Reactive{
-	/** Default options for {@link Reactive#subscribe}. By default, a microtask {@link AutoQueue} is
+	/** Hook for auto-dependency tracking. When set, this function is called on every
+	 * reactive value read with the reactive as argument. Set by ReactiveComputed to enable
+	 * auto-tracking without creating a circular import.
+	 * @type {?function}
+	 * @memberof Reactive
+	 * @static
+	 * @private
+	 */
+	static _track = null;
+	/** Default options for {@link Reactive#subscribe}. By default, a microtask clock is
 	 * used, with `notify`, `tracking`, and `unsubscribe` all set to `false`. You can change these
 	 * default options to interface better with external libraries or your preferred syntax.
 	 * @memberof Reactive
@@ -46,7 +55,9 @@ export class Reactive{
 	 * @see Reactive#subscribe
 	 */
 	static subscribe_defaults = {
-		queue: AutoQueue(),
+		scheduler: scheduler,
+		mode: "microtask",
+		timeout: -1,
 		notify: false,
 		tracking: false,
 		unsubscribe: false
@@ -183,17 +194,12 @@ export class Reactive{
 
 	/** Options when subscribing. See {@link Reactive.subscribe_defaults} for default values.
 	 * @typedef {object} Reactive~SubscribeOptions
-	 * @property {null | Queue | AutoQueue | string | any[]} queue If `null` or `"sync"`, the
-	 *  subscriber will be notified synchronously.
-	 *
-	 *  All other options give async notifications. If
-	 *  you don't pass either a {@link Queue} or {@link AutoQueue}, the option specifies arguments
-	 *  to pass to {@link AutoQueue}. This can be a single `mode` argument, or tuple `[mode,
-	 *  timeout]`.
-	 * @property {string} mode Alternative syntax to specify an {@link AutoQueue} queue; this
-	 *  specifies the `mode` argument
-	 * @property {number} timeout Alternative syntax to specify an {@link AutoQueue} queue; this
-	 *  specifies the `timeout` argument
+	 * @property {null | Scheduler} scheduler Scheduler to use for async notifications
+	 * @property {null | string} mode Clock mode that determines async notification timing
+	 *  guarantees Clocks are fetched from the scheduler. Null or "sync" will not use a clock, but
+	 *  notify synchronously.
+	 * @property {number} timeout Timeout parameter for the clock mode (e.g. `500` for
+	 *  `timeout(500)`)
 	 * @property {null | boolean | string} notify Whether the subscriber is notified immediately on
 	 * subscribe, to indicate the current value:
 	 * - `false`: not notified
@@ -214,46 +220,36 @@ export class Reactive{
 	 *  new {@link Subscriber} will be attached to it under an unenumerable key (see
 	 *  {@link Subscriber.attach}). Otherwise, pass in a {@link Subscriber} that you created
 	 *  directly
-	 * @param {Reactive~SubscribeOptions | null | Queue | AutoQueue | string} opts For full
-	 *  configuration, this should be an object containing config options. Otherwise it can be just
-	 *  the {@link Reactive~SubscribeOptions|queue} config option.
+	 * @param {Reactive~SubscribeOptions | null | string} opts For full configuration, this should
+	 *  be an object containing config options. Otherwise it can be just the
+	 *  {@link Reactive~SubscribeOptions|mode} config option.
 	 * @returns {number | function} By default, it returns the new subscriber count. If requested
 	 *  via {@link Reactive~SubscribeOptions|unsubscribe} config option, an unsubscribe function can
 	 *  be returned instead.
 	 */
 	subscribe(subscriber, opts={}){
 		const defaults = this.subscribe_defaults || Reactive.subscribe_defaults;
-		// opts can just be queue option
+		// opts can just be mode string
 		if (!opts || opts.constructor !== Object)
-			opts = {queue: opts};
+			opts = {mode: opts};
 		if (!(subscriber instanceof Subscriber))
 			subscriber = Subscriber.attach(subscriber, opts.tracking ?? defaults.tracking);
 		// check if already subscribed;
 		// infrequent and usually few items, so we just do a linear search
 		if (Link.findSubscriber(this.sync, subscriber) !== -1 || Link.findSubscriber(this.async, subscriber) !== -1)
 			throw Error("Already subscribed");
-		// get the subscriber queue
-		let queue;
-		if ("queue" in opts){
-			queue = opts.queue;
-			queue_syntax: {
-				if (queue === "sync")
-					queue = null;
-				else{
-					if (typeof queue === "string")
-						queue = [queue, -1];
-					else if (!Array.isArray(queue))
-						break queue_syntax;
-					queue = AutoQueue(...queue);
-				}
-			}
-		}
-		else if ("mode" in opts)
-			queue = AutoQueue(opts.mode, opts.timeout ?? -1);
-		else queue = defaults.queue;
+		// resolve the clock for this subscription
+		const sched = opts.scheduler ?? defaults.scheduler;
+		const mode = opts.mode ?? defaults.mode;
+		const timeout = opts.timeout ?? defaults.timeout;
+		let clock;
+		if (mode === null || mode === "sync")
+			clock = null;
+		else
+			clock = sched.getClock(mode, timeout);
 		// add subscriber
-		const link = new Link(subscriber, queue);
-		if (!queue){
+		const link = new Link(subscriber, clock);
+		if (!clock){
 			if (this.sync.push(link) > 1 && !this.sync_iter)
 				this.sync_iter = new SynchronousIterator();
 		}
@@ -267,7 +263,7 @@ export class Reactive{
 		const notify = "notify" in opts ? opts.notify : defaults.notify;
 		if (notify !== false){
 			// sync (possibly forced)
-			if ((notify === null || notify === "sync") || !queue){
+			if ((notify === null || notify === "sync") || !clock){
 				Queue.called();
 				link.call();
 			}
@@ -311,7 +307,8 @@ export class Reactive{
 		if (i !== -1){
 			link = this.sync.splice(i, 1)[0];
 			// in case of unsubscribe during synchronous notify
-			this.sync_iter.unsubscribe(i);
+			if (this.sync_iter)
+				this.sync_iter.unsubscribe(i);
 		}
 		else{
 			i = Link.findSubscriber(this.async, subscriber);
@@ -354,6 +351,8 @@ export class ReactiveValue extends Reactive{
 		this._value = value;
 	}
 	get value(){
+		if (Reactive._track)
+			Reactive._track(this);
 		return this._value;
 	}
 	set value(value){
@@ -388,6 +387,8 @@ export class ReactivePointer extends Reactive{
 		this._property = property;
 	}
 	get value(){
+		if (Reactive._track)
+			Reactive._track(this);
 		return this._object[this._property];
 	}
 	set value(value){
