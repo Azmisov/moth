@@ -16,6 +16,13 @@
  * ticks (timeout(N), idle(N)).
  */
 
+let _clockId = 0;
+/** Allocate a unique clock ID. Each clock gets a unique integer ID, used by {@link Subscriber}
+ * to key per-clock queue bookkeeping. Exported for custom clock implementations.
+ * @returns {number}
+ */
+export function nextClockId() { return _clockId++; }
+
 /** Coerces millisecond delay argument to a non-negative 32-bit integer
  * @param {number} v Millisecond delay
  * @returns {number}
@@ -41,7 +48,7 @@ function timeoutToInt(v) {
  * Unique identifier for this clock instance. Used by {@link Subscriber} to key its
  * per-clock queue bookkeeping.
  * @name Clock#id
- * @type {Symbol}
+ * @type {number}
  */
 /**
  * Priority rank as a single bit. Lower bit position = higher priority
@@ -90,7 +97,7 @@ export class MicrotaskClock {
 	scheduled = false;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -116,7 +123,7 @@ export class PromiseClock {
 	scheduled = false;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -143,7 +150,7 @@ export class TickClock {
 	scheduled = false;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -169,7 +176,7 @@ export class MessageClock {
 	scheduled = false;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -210,7 +217,7 @@ export class ImmediateClock {
 	_sid = null;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -242,7 +249,7 @@ export class TimeoutClock {
 	_sid = null;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -277,7 +284,7 @@ export class TimeoutDelayClock {
 	 *  @param {number} timeout Delay in milliseconds; must be > 0
 	 */
 	constructor(sched, timeout) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		/** The delay in milliseconds for this clock
 		 * @type {number}
@@ -318,7 +325,7 @@ export class AnimationClock {
 	_sid = null;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;
@@ -355,7 +362,7 @@ export class IdleDelayClock {
 	 *  @param {number} timeout Fallback delay in milliseconds; must be > 0
 	 */
 	constructor(sched, timeout) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		/** The fallback delay in milliseconds for this clock
 		 * @type {number}
@@ -394,7 +401,7 @@ export class IdleClock {
 	_sid = null;
 	/** @param {Scheduler} sched */
 	constructor(sched) {
-		this.id = Symbol();
+		this.id = nextClockId();
 		this.scheduler = sched;
 		const clock = this;
 		const queue = sched.queue;

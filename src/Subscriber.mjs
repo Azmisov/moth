@@ -129,7 +129,7 @@ export class Subscriber{
 	/** How many dependencies requested a notification through a particular clock; this is used
 	 * to track whether an unsubscribe should dequeue. Keyed by clock.id, each value is
 	 * `{count, clock}`.
-	 * @type {Object<Symbol, {count: number, clock: Clock}>}
+	 * @type {Object<number, {count: number, clock: Clock}>}
 	 * @protected
 	 */
 	queued = {};
@@ -149,7 +149,7 @@ export class Subscriber{
 	}
 	/** Calls the subscriber's callback function, thus notifying of any dependency changes. The
 	 * subscriber is dequeued from any other clocks. This can be safely called manually if desired.
-	 * @param {?Symbol} clockId The clock identifier that triggered this call. Can be omitted if
+	 * @param {?number} clockId The clock identifier that triggered this call. Can be omitted if
 	 * 	the call was triggered manually or synchronously.
 	 */
 	call(clockId){

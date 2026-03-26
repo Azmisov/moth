@@ -240,7 +240,7 @@ export class Reactive{
 			throw Error("Already subscribed");
 		// resolve the clock for this subscription
 		const sched = opts.scheduler ?? defaults.scheduler;
-		const mode = opts.mode ?? defaults.mode;
+		const mode = "mode" in opts ? opts.mode : defaults.mode;
 		const timeout = opts.timeout ?? defaults.timeout;
 		let clock;
 		if (mode === null || mode === "sync")

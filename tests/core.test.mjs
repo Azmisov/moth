@@ -4,7 +4,7 @@
 	- proxy with private properties
 */
 import {
-	AutoQueue, MicrotaskQueue, TrackingSubscriber, Reactive, ReactiveValue,
+	Scheduler, scheduler, TrackingSubscriber, Reactive, ReactiveValue,
 	ReactiveAccessor
 } from "../src/moth.mjs";
 
@@ -19,17 +19,18 @@ function delay_microtask(){
 	});
 }
 
-const nodejs_blacklist = new Set(["animation","idle"])
+const nodejs_blacklist = new Set(["animation","idle"]);
 // Edge did support immediate, but it is now deprecated
 const browser_blacklist = new Set(["tick","immediate"]);
 const blacklist = typeof window === "undefined" ? nodejs_blacklist : browser_blacklist;
+const allModes = Object.keys(Scheduler.clockClasses);
 
 // Test that changes are getting batched
 test("batch", async () => {
 	let count = 0;
 	function cbk(){ count++; }
 	let vals = [];
-	for (let m in AutoQueue.modes){
+	for (const m of allModes){
 		if (blacklist.has(m))
 			continue;
 		const v = new ReactiveValue(0)
@@ -90,12 +91,12 @@ test("unsubscribe", async () => {
 	let count = 0;
 	let v = new ReactiveValue(0);
 	let cbks = [];
-	for (let m in AutoQueue.modes){
+	for (const m of allModes){
 		if (blacklist.has(m))
 			continue;
 		const c = () => count++;
 		cbks.push(c);
-		v.subscribe(c, m);		
+		v.subscribe(c, m);
 	}
 	v.value++;
 	for (const c of cbks)
@@ -137,7 +138,7 @@ test("unsubscribe all", async () => {
 test("reap (manually tested)", () => {
 	let v = new ReactiveValue(0);
 	let count = 0;
-	v.subscribe(() => count++, "timeout", 50);
+	v.subscribe(() => count++, {mode: "timeout", timeout: 50});
 	v.value++;
 });
 // recursive unsubscribe inside sync
@@ -190,7 +191,7 @@ test("flush", () => {
 	let count = 0;
 	r.subscribe(() => count++);
 	r.value++;
-	AutoQueue.flush(false);
+	scheduler.flush();
 	expect(count).toEqual(1);
 });
 // this tests that the Queue.count dirty optimization in Reactive.notify works
@@ -219,32 +220,35 @@ test("queue optimization", async () => {
 	await delay();
 	expect(count).toEqual(3);
 });
-// test non-autoqueue subscribe
-test("non-autoqueue", async () => {
-	const mine = new MicrotaskQueue();
+// test separate scheduler subscribe
+test("separate scheduler", async () => {
+	const mine = new Scheduler();
 	let r1 = new ReactiveValue(0);
 	let r2 = new ReactiveValue(0);
 	let a = 0, b = 0;
 	function cbk(){ a++; }
 	r1.subscribe(cbk);
-	r2.subscribe(cbk, mine);
+	r2.subscribe(cbk, {scheduler: mine});
 	r1.subscribe(() => b++);
 	r1.value++;
 	r2.value++;
-	mine.flush(false);
+	mine.flush();
 	expect(a).toEqual(1);
 	await delay(10);
 	expect(a).toEqual(1);
 	expect(b).toEqual(1);
 });
-// subscribe options: default queue
-test("default queue", async () => {
+// subscribe options: default mode
+test("default mode", async () => {
 	const r = new ReactiveValue(0);
-	const old = Reactive.subscribe_defaults.queue;
-	Reactive.subscribe_defaults.queue = AutoQueue("timeout",10);
+	const oldMode = Reactive.subscribe_defaults.mode;
+	const oldTimeout = Reactive.subscribe_defaults.timeout;
+	Reactive.subscribe_defaults.mode = "timeout";
+	Reactive.subscribe_defaults.timeout = 10;
 	let a = 0, b = 0;
 	r.subscribe(() => a++);
-	Reactive.subscribe_defaults.queue = old;
+	Reactive.subscribe_defaults.mode = oldMode;
+	Reactive.subscribe_defaults.timeout = oldTimeout;
 	r.subscribe(() => b++);
 	r.value++;
 	await delay(5);
@@ -254,66 +258,46 @@ test("default queue", async () => {
 	expect(a).toEqual(1);
 	expect(b).toEqual(1);
 });
-// subscribe options: queue syntaxes
-test("queue syntaxes", async () => {
+// subscribe options: mode syntaxes
+test("mode syntaxes", async () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
-	r.subscribe(() => count++, AutoQueue("timeout"));
-	r.subscribe(() => count++, AutoQueue("timeout",-1));
-	r.subscribe(() => count++, new AutoQueue("timeout"));
-	r.subscribe(() => count++, new AutoQueue("timeout",-1));
+	// mode as string shorthand
 	r.subscribe(() => count++, "timeout");
-	r.subscribe(() => count++, ["timeout",-1]);
-	r.subscribe(() => count++, {queue:"timeout"});
-	r.subscribe(() => count++, {queue:["timeout",-1]});
-	r.subscribe(() => count++, {queue:AutoQueue("timeout")});
-	r.subscribe(() => count++, {queue:AutoQueue("timeout",-1)});
-	r.subscribe(() => count++, {queue:new AutoQueue("timeout")});
-	r.subscribe(() => count++, {queue:new AutoQueue("timeout",-1)});
-	r.subscribe(() => count++, {mode:"timeout"});
-	r.subscribe(() => count++, {mode:"timeout",timeout:-1});
+	// mode as opts object
+	r.subscribe(() => count++, {mode: "timeout"});
+	r.subscribe(() => count++, {mode: "timeout", timeout: -1});
+	// sync modes
+	r.subscribe(() => count++, null);
+	r.subscribe(() => count++, "sync");
+	r.subscribe(() => count++, {mode: null});
+	r.subscribe(() => count++, {mode: "sync"});
+	// default (microtask)
 	r.subscribe(() => count++);
 	r.value++;
-	// make sure they're all queud on timeout queue
-	await delay_microtask();
-	expect(count).toEqual(1);
+	// sync subscribers called immediately
+	expect(count).toEqual(4);
 	await delay(5);
-	expect(count).toEqual(15);
+	// all should have fired
+	expect(count).toEqual(8);
 });
-// new AutoQueue should reference the same queue on backend
-test("new autoqueue", () => {
+// getClock returns same clock for same mode+timeout, so scheduler.flush works
+test("shared clock flush", () => {
 	const r = new ReactiveValue(0);
 	let count = 0;
-	r.subscribe(() => count++, ["timeout",4]);
+	r.subscribe(() => count++, {mode: "timeout", timeout: 4});
 	r.value++;
-	(new AutoQueue("timeout",4)).flush();
+	scheduler.flush();
 	expect(count).toEqual(1);
 });
-// flush while in notifying loop should do nothing
-test("nonrecursive flush", async () => {
-	const r = new ReactiveValue(0);
-	let a = 0, b = 0;
-	r.subscribe(() => {
-		a++;
-		AutoQueue().flush(false);
-		// wrong count after flush?
-		expect(a).toEqual(1);
-		expect(b).toEqual(0);
-	});
-	r.subscribe(() => b++);
-	r.value++;
-	await delay();
-	expect(a).toEqual(1);
-	expect(b).toEqual(1);
-});
-// forcing flush while in notifying loop
+// recursive flush from within subscriber drains remaining subscribers
 test("recursive flush", async () => {
 	const r = new ReactiveValue(0);
 	let a = 0, b = 0;
 	r.subscribe(() => {
 		a++;
-		AutoQueue().flush(true);
-		// wrong count after flush?
+		scheduler.flush();
+		// b should have been flushed by the recursive call
 		expect(a).toEqual(1);
 		expect(b).toEqual(1);
 	});

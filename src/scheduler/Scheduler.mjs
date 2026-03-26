@@ -432,7 +432,7 @@ class FIFOQueue {
 	/** Null values in queue before compacting the buffer */
 	static compactLimit = 500
 	/** Clock identifier passed to subscriber.call() during flush
-	 * @type {Symbol}
+	 * @type {number}
 	 */
 	clockId;
 	/** @param {Clock} clock Clock this queue is associated with */
@@ -508,7 +508,6 @@ class FIFOQueue {
 	 *  for uniform interface)
 	 */
 	flush(clock) {
-		Queue.called();
 		const clockId = this.clockId;
 		// A subscriber may call flush() recursively. Both the outer and recursive call iterate
 		// this.iter via for...of, which advances the shared iterator by calling .next(). The
@@ -525,6 +524,9 @@ class FIFOQueue {
 			this.flushBuffer.length = 0;
 		}
 		while (this._bufferQueued){
+			// each buffer swap is a new flush generation; Reactive.notify uses Queue.calls
+			// to avoid re-enqueuing in the same generation, so we must increment per swap
+			Queue.called();
 			const swap = this.flushBuffer;
 			this.flushBuffer = this.buffer;
 			this.buffer = swap;
