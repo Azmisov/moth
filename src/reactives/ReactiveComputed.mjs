@@ -10,16 +10,28 @@ import { Subscriber } from "../Subscriber.mjs";
  */
 const trackingStack = [];
 
+/** @private */
+const STALE = 1;
+/** @private */
+const OVERRIDE = 2;
+/** @private */
+const COMPUTING = 4;
+/** @private */
+const AUTOTRACK = 8;
+
 // Install the tracking hook on Reactive. This is called by every Reactive subclass getter
 // when Reactive._track is set. We only set it when there's an active tracking context.
+// Handles subscribe inline so no separate reconciliation pass is needed for new deps.
 function _trackDep(dep) {
-	const len = trackingStack.length;
-	if (len)
-		trackingStack[len - 1]._deps.add(dep);
+	const computed = trackingStack[trackingStack.length - 1];
+	const deps = computed._deps;
+	if (!deps.has(dep))
+		dep.subscribe(computed._subscriber, computed._trackOpts);
+	deps.set(dep, computed._depGen);
 }
 
-/** A reactive value whose getter wraps a memoized function call. The function is lazily
- * re-evaluated when the value is read and any of its inputs have changed. If the recomputed
+/** A reactive value whose getter wraps a memoized function call. Additionally, the function call
+ * itself acts serves as a subscriber, recomputed when its inputs have changed. If the recomputed
  * result differs (`!==`), downstream subscribers are notified.
  *
  * This fits the existing Reactive type hierarchy:
@@ -49,77 +61,78 @@ export class ReactiveComputed extends Reactive {
 	 * @private
 	 */
 	_value;
-	/** Whether the cached value is stale and needs recomputation
-	 * @type {boolean}
+	/** Bitflags: STALE | OVERRIDE | COMPUTING | AUTOTRACK
+	 * @type {number}
 	 * @private
 	 */
-	_stale = true;
-	/** Whether the value was manually overridden via set/assume
-	 * @type {boolean}
+	_flags = STALE;
+	/** Map of reactives this computed is subscribed to → generation counter.
+	 * Only present when auto-tracking is enabled. Entries with counter < _depGen
+	 * after compute are stale and get unsubscribed.
+	 * @member {Map<Reactive, number>} _deps
 	 * @private
 	 */
-	_override = false;
-	/** Whether we are currently inside the compute function (cycle detection)
-	 * @type {boolean}
-	 * @private
-	 */
-	_computing = false;
-	/** Whether auto-tracking is enabled for this computed
-	 * @type {boolean}
-	 * @private
-	 */
-	_autotrack;
-	/** Set of reactives this computed is subscribed to (for auto-tracking cleanup).
+	/** Generation counter for dependency tracking, incremented each compute.
 	 * Only present when auto-tracking is enabled.
-	 * @type {?Set<Reactive>}
+	 * @member {number} _depGen
 	 * @private
 	 */
-	_deps = null;
+	/** Delta from manual depend/undepend calls between computes.
+	 * Only present when auto-tracking is enabled.
+	 * @member {number} _depDelta
+	 * @private
+	 */
 	/** Internal subscriber used to listen to input reactives
 	 * @type {Subscriber}
 	 * @private
 	 */
 	_subscriber;
+	/** Subscribe options used for auto-tracked dependencies. Only present when auto-tracking
+	 * is enabled.
+	 * @member {Reactive~SubscribeOptions | null | string} _trackOpts
+	 * @private
+	 */
 
 	/** Create a new computed reactive
 	 * @param {function} fn The computation function. Its return value becomes the reactive's
 	 *  value. When auto-tracking is enabled, any reactives read during execution are
 	 *  automatically subscribed as dependencies.
-	 * @param {boolean} [autotrack=true] Whether to automatically track dependencies by
-	 *  detecting which reactives are read during `fn` execution. When false, you must
-	 *  manually subscribe the computed's internal subscriber to its dependencies.
+	 * @param {Reactive~SubscribeOptions | null | string | false} [autotrack=null] Subscribe
+	 *  options for auto-tracked dependencies, same as {@link Reactive#subscribe}. Defaults to
+	 *  `null` (sync). Pass `false` to disable auto-tracking entirely, in which case you must
+	 *  manually subscribe via {@link ReactiveComputed#depend}.
 	 */
-	constructor(fn, autotrack=true) {
+	constructor(fn, autotrack=null) {
 		super();
 		this._fn = fn;
-		this._autotrack = autotrack;
-		if (autotrack)
-			this._deps = new Set();
+		if (autotrack !== false){
+			this._flags |= AUTOTRACK;
+			this._trackOpts = autotrack;
+			this._deps = new Map();
+			this._depGen = Number.MIN_SAFE_INTEGER+1;
+			this._depDelta = 0;
+		}
 		// create internal subscriber; when notified, it marks this computed as stale
 		// and notifies our own downstream subscribers
-		this._subscriber = new Subscriber();
-		const that = this;
-		this._subscriber.callable = function() {
-			that._subscriber.clean();
-			that._markStale();
-		};
+		this._subscriber = new Subscriber(this._markStale.bind(this));
 	}
 
-	/** Mark this computed as stale, recompute, and notify downstream only if the value
-	 * actually changed. This eagerly resolves so that downstream subscribers always see
-	 * consistent state and we avoid spurious notifications.
+	/** Mark this computed as stale. If there are downstream subscribers, eagerly recomputes
+	 * and notifies only if the value changed. Otherwise, defers recomputation to the next
+	 * `.value` read (pure pull).
 	 * @private
 	 */
 	_markStale() {
-		if (this._stale)
+		if (this._flags & STALE)
 			return;
-		this._stale = true;
-		this._override = false;
-		// eagerly recompute so we can check if value actually changed
-		const oldValue = this._value;
-		this._value = this._compute();
-		if (this._value !== oldValue)
-			this.notify();
+		this._flags = (this._flags | STALE) & ~OVERRIDE;
+		// only eagerly recompute if there are downstream subscribers to notify
+		if (this.sync || this.async){
+			const oldValue = this._value;
+			this._value = this._compute();
+			if (this._value !== oldValue)
+				this.notify();
+		}
 	}
 
 	/** Recompute the value by running the function. If auto-tracking is enabled, this
@@ -127,48 +140,50 @@ export class ReactiveComputed extends Reactive {
 	 * @private
 	 */
 	_compute() {
-		if (this._computing)
+		// There are probably some fringe, legitimate cases for doing recursive computed. For
+		// example, preamble of computed updates some state, a dependency fetches the computed value
+		// triggering recursion, but due to preamble updated state it can now return an initial
+		// value to stop the recursion. But most commonly this is just a bug, so we prevent it.
+		if (this._flags & COMPUTING)
 			throw Error("Circular dependency detected in ReactiveComputed");
-		this._computing = true;
-		const oldDeps = this._deps;
-		let newDeps;
-		if (this._autotrack){
-			newDeps = new Set();
-			this._deps = newDeps;
+		this._flags |= COMPUTING;
+		// setup dependency tracking; increment generation so _trackDep can detect stale deps
+		let prevSize;
+		if (this._flags & AUTOTRACK){
+			this._depGen++;
+			prevSize = this._deps.size;
 			trackingStack.push(this);
-			// enable tracking hook if this is the first tracker on the stack
 			if (trackingStack.length === 1)
 				Reactive._track = _trackDep;
 		}
+		// run computation; _trackDep subscribes to new deps inline
 		let result;
 		try {
 			result = this._fn();
 		}
 		finally {
-			if (this._autotrack){
+			if (this._flags & AUTOTRACK){
 				trackingStack.pop();
-				// disable tracking hook if stack is empty
 				if (!trackingStack.length)
 					Reactive._track = null;
-			}
-			this._computing = false;
-		}
-		// reconcile dependencies if auto-tracking
-		if (this._autotrack){
-			// unsubscribe from deps that are no longer read
-			if (oldDeps){
-				for (const dep of oldDeps){
-					if (!newDeps.has(dep))
-						dep.unsubscribe(this._subscriber);
+				// unsubscribe from deps no longer read (stale generation); skip if deps size
+				// unchanged (adjusted for manual depend/undepend), meaning all existing deps were
+				// seen by _trackDep
+				if (this._deps.size !== prevSize + this._depDelta){
+					this._depDelta = 0;
+					const gen = this._depGen;
+					for (const [dep, g] of this._deps){
+						if (g < gen){
+							dep.unsubscribe(this._subscriber);
+							this._deps.delete(dep);
+						}
+					}
 				}
+				else this._depDelta = 0;
 			}
-			// subscribe to new deps (subscribe is idempotent check via "already subscribed")
-			for (const dep of newDeps){
-				if (!oldDeps || !oldDeps.has(dep))
-					dep.subscribe(this._subscriber, null);
-			}
+			this._flags &= ~COMPUTING;
 		}
-		this._stale = false;
+		this._flags &= ~STALE;
 		return result;
 	}
 
@@ -176,18 +191,13 @@ export class ReactiveComputed extends Reactive {
 		// participate in parent auto-tracking
 		if (Reactive._track)
 			Reactive._track(this);
-		// lazy recomputation
-		if (this._stale && !this._override){
-			const oldValue = this._value;
+		// lazy recomputation; downstream notification already handled by _markStale
+		if ((this._flags & (STALE | OVERRIDE)) === STALE)
 			this._value = this._compute();
-			// if value changed, downstream subscribers are already notified from _markStale;
-			// they'll get the new value when they read .value
-		}
 		return this._value;
 	}
 	set value(value) {
-		this._override = true;
-		this._stale = false;
+		this._flags = (this._flags | OVERRIDE) & ~STALE;
 		if (value !== this._value){
 			this._value = value;
 			this.notify();
@@ -197,31 +207,24 @@ export class ReactiveComputed extends Reactive {
 	 * @param value the overridden value
 	 */
 	assume(value) {
-		this._override = true;
-		this._stale = false;
+		this._flags = (this._flags | OVERRIDE) & ~STALE;
 		this._value = value;
 	}
 	unwrap() {
 		return {value: this._value};
 	}
 
-	/** Get the internal subscriber, for manually subscribing to dependencies when
-	 * auto-tracking is disabled
-	 * @type {Subscriber}
-	 */
-	get subscriber() {
-		return this._subscriber;
-	}
-
 	/** Manually add a dependency. The computed will be marked stale when `dep` changes.
 	 * @param {Reactive} dep The reactive dependency
-	 * @param {null | string} [queue=null] Queue mode for the subscription. Defaults to sync
-	 *  so the computed is marked stale immediately.
+	 * @param {Reactive~SubscribeOptions | null | string} [opts=null] Subscribe options, same as
+	 *  {@link Reactive#subscribe}. Defaults to sync so the computed is marked stale immediately.
 	 */
-	depend(dep, queue=null) {
-		dep.subscribe(this._subscriber, queue);
-		if (this._deps)
-			this._deps.add(dep);
+	depend(dep, opts=null) {
+		dep.subscribe(this._subscriber, opts);
+		if (this._deps){
+			this._deps.set(dep, Infinity);
+			this._depDelta++;
+		}
 	}
 
 	/** Manually remove a dependency
@@ -229,8 +232,10 @@ export class ReactiveComputed extends Reactive {
 	 */
 	undepend(dep) {
 		dep.unsubscribe(this._subscriber);
-		if (this._deps)
+		if (this._deps){
 			this._deps.delete(dep);
+			this._depDelta--;
+		}
 	}
 
 	/** Destroy this computed, unsubscribing from all dependencies
@@ -238,7 +243,7 @@ export class ReactiveComputed extends Reactive {
 	dispose() {
 		// unsubscribe our internal subscriber from all deps
 		if (this._deps){
-			for (const dep of this._deps)
+			for (const [dep] of this._deps)
 				dep.unsubscribe(this._subscriber);
 			this._deps.clear();
 		}

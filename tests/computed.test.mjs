@@ -36,10 +36,10 @@ test("computed is lazy on first read", () => {
 	// reading again without change should not recompute
 	expect(c.value).toEqual(2);
 	expect(calls).toEqual(1);
-	// change input triggers eager recompute (to check if value actually changed)
+	// change input marks stale but doesn't recompute (no subscribers = pure pull)
 	a.value = 5;
-	expect(calls).toEqual(2);
-	// reading returns cached result without recomputing
+	expect(calls).toEqual(1);
+	// reading triggers recomputation
 	expect(c.value).toEqual(10);
 	expect(calls).toEqual(2);
 });

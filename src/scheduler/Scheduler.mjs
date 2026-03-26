@@ -522,9 +522,9 @@ class FIFOQueue {
 			this.flushBuffer.length = 0;
 		}
 		while (this._bufferQueued){
-			// each buffer swap is a new flush generation; Reactive.notify uses Scheduler.calls
+			// each buffer swap is a new flush generation; Reactive.notify uses Scheduler.gen
 			// to avoid re-enqueuing in the same generation, so we must increment per swap
-			Scheduler.called();
+			Scheduler.gen++;
 			const swap = this.flushBuffer;
 			this.flushBuffer = this.buffer;
 			this.buffer = swap;
@@ -552,14 +552,7 @@ export class Scheduler {
 	 * @type {number}
 	 * @static
 	 */
-	static calls = 0;
-	/** Increment the flush generation counter. Call this when a queue flush occurs.
-	 * @static
-	 */
-	static called(){
-		if (++this.calls === Number.MAX_SAFE_INTEGER)
-			this.calls = Number.MIN_SAFE_INTEGER+1;
-	}
+	static gen = Number.MIN_SAFE_INTEGER+1;
 	/** Registry of non-parameterized clock classes, keyed by mode string. Clock modules
 	 * register themselves here to avoid circular imports.
 	 * @type {Object<string, function(new:Clock, RankedQueue)>}

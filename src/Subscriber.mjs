@@ -4,7 +4,7 @@
  * @protected
  */
 export class Link{
-	/** If this equals Subscriber.calls, the value is dirty and subscriber needs to be notified;
+	/** If this equals Subscriber.gen, the value is dirty and subscriber needs to be notified;
 	 * e.g. if subscriber is called, all dirty values/links are now clean
 	 * @private
 	 * @type {number}
@@ -45,17 +45,17 @@ export class Link{
 	}
 	/** Indicates whether the link is dirty, meaning the value for {@link Link#dep} has changed,
 	 * necessitating a notification to {@link Link#subscriber}. This can be set to `false`, marking
-	 * the link clean. Uses a counter trick: dirty is true when `_dirty === subscriber.calls`.
+	 * the link clean. Uses a counter trick: dirty is true when `_dirty === subscriber.gen`.
 	 * Setting dirty stamps the current counter; {@link Subscriber#clean} increments the counter,
 	 * making all links clean in O(1) without iteration.
 	 * @type {boolean}
 	 * @default false
 	 */
 	get dirty(){
-		return this._dirty === this.subscriber.calls;
+		return this._dirty === this.subscriber.gen;
 	}
 	set dirty(toggle){
-		this._dirty = this.subscriber.calls - !toggle;
+		this._dirty = this.subscriber.gen - !toggle;
 	}
 
 	/** Search for a subscriber in a list of links
@@ -117,7 +117,7 @@ export class Subscriber{
 	/** Number of times this subscriber has been notified (w/ possible overflow)
 	 * @private
 	 */
-	calls = 0;
+	gen = Number.MIN_SAFE_INTEGER+1;
 	/** How many dependencies requested a notification through a particular clock; this is used
 	 * to track whether an unsubscribe should dequeue. Keyed by clock.id, each value is
 	 * `{count, clock}`. Lazily initialized on first async enqueue.
@@ -133,7 +133,7 @@ export class Subscriber{
 		// can be falsey to accomodate sub-classes
 		if (callable){
 			this.callable = () => {
-				this.clean();
+				this.gen++;
 				return callable();
 			};
 		}
@@ -148,14 +148,6 @@ export class Subscriber{
 			delete this.queued[clockId];
 		this.dequeue();
 		this.callable();
-	}
-	/** Mark all links as clean. Typical code should not need to call this, and can in fact
-	 * break functionality if not called along with {@link Subscriber#dequeue}.
-	 */
-	clean(){
-		// using a counter to denote/reset dirty values, to avoid looping over links
-		if (++this.calls === Number.MAX_SAFE_INTEGER)
-			this.calls = Number.MIN_SAFE_INTEGER+1;
 	}
 	/** Queue asynchronous notification of this subscriber, e.g. in response to a change to a
 	 * dependency. The link's clock determines which scheduler queue the notification goes to.
@@ -279,14 +271,14 @@ export class TrackingSubscriber extends Subscriber{
 			case "expand":
 				this.callable = () => {
 					const a = map();
-					this.clean();
+					this.gen++;
 					return callable(...a);
 				};
 				break;
 			case "array":
 				this.callable = () => {
 					const a = map();
-					this.clean();
+					this.gen++;
 					return callable(a);
 				}
 				break;
@@ -295,7 +287,7 @@ export class TrackingSubscriber extends Subscriber{
 					let a = map();
 					if (a.length === 1)
 						a = a[0];
-					this.clean();
+					this.gen++;
 					return callable(a);
 				}
 				break;

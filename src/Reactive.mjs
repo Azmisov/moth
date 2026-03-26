@@ -61,7 +61,7 @@ export class Reactive{
 		notify: false,
 		tracking: false
 	};
-	/** Indicates when the last notify call was performed, as given by a Scheduler.calls timestamp;
+	/** Indicates when the last notify call was performed, as given by a Scheduler.gen timestamp;
 	 * this is used to avoid repeatedly queueing notifications in a loop. Lazily initialized on
 	 * first async subscriber.
 	 * @member {number} dirty
@@ -137,8 +137,8 @@ export class Reactive{
 		// queue async first, since they could be called synchronously in a recursive notify;
 		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
 		// cases, e.g. no sync calls, no new subscriptions, no queues flushed
-		if (a && this.dirty !== Scheduler.calls){
-			this.dirty = Scheduler.calls;
+		if (a && this.dirty !== Scheduler.gen){
+			this.dirty = Scheduler.gen;
 			for (const link of a)
 				link.subscriber.enqueue(link);
 		}
@@ -161,7 +161,7 @@ export class Reactive{
 		if (sl){
 			// recursive notifies could end up calling async, not just from this value; there are
 			// some things you can do to narrow the bounds, but I don't think it is worth it
-			Scheduler.called();
+			Scheduler.gen++;
 			// all but first we need to track if still dirty before running
 			const si = this.sync_iter;
 			if (sl > 1){
@@ -251,7 +251,7 @@ export class Reactive{
 		else{
 			(this.async || (this.async = [])).push(link);
 			// forces requeue on next notify; dirty is lazily initialized here
-			this.dirty = (this.dirty ?? Scheduler.calls) - 1;
+			this.dirty = (this.dirty ?? Scheduler.gen) - 1;
 		}
 		// tracks the reactive on the subscriber if subscriber wants
 		if (subscriber.subscribe)
@@ -261,7 +261,7 @@ export class Reactive{
 		if (notify !== false){
 			// sync (possibly forced)
 			if ((notify === null || notify === "sync") || !clock){
-				Scheduler.called();
+				Scheduler.gen++;
 				link.subscriber.call(null);
 			}
 			// async
