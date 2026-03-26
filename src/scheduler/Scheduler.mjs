@@ -14,7 +14,7 @@
  * ```
  * Reactive.notify()
  *   → Link.enqueue()
- *     → SchedulerQueue.enqueue(subscriber)        [v1.0 interface adapter]
+ *     → Subscriber.enqueue(link)
  *       → Scheduler.enqueue(clock, subscriber)     [manages clock lifecycle]
  *         → RankedQueue.enqueue(clock, subscriber) [routes by clock rank bitmask]
  *           → FIFOQueue.enqueue(subscriber)        [non-timeout: direct FIFO]
@@ -62,9 +62,9 @@
  *   subscribers are enqueued, unschedules when their queue drains. Creates the bound
  *   flush callback bound in the clock's constructor.
  *
- * - **SchedulerQueue**: Adapter bridging the v1.0 Queue interface (enqueue/dequeue/flush/qid)
- *   to the v2.0 Scheduler, so existing Reactive.subscribe/Link infrastructure works without
- *   modification.
+ * - **Subscriber**: Tracks per-clock queue bookkeeping via `queued` object keyed by clock.id.
+ *   Handles deduplication (same subscriber, same clock) via refcounting, and cross-clock
+ *   dequeue on call (first clock to fire clears subscriber from all other clocks).
  */
 import { Queue } from "../Queue.mjs";
 

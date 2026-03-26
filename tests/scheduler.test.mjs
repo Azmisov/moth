@@ -4,7 +4,7 @@ import {
 	AnimationClock, IdleDelayClock, IdleClock,
 } from "../src/scheduler/Clock.mjs";
 import {
-	Scheduler, SchedulerQueue
+	Scheduler
 } from "../src/scheduler/Scheduler.mjs";
 const { clockClasses } = Scheduler;
 import { ReactiveValue } from "../src/Reactive.mjs";
@@ -75,7 +75,7 @@ test("clock mask includes all lower priority ranks", () => {
 });
 
 test("TimeoutDelayClock requires non-zero timeout", () => {
-	expect(() => new TimeoutDelayClock({}, 0)).toThrow(/non-zero/i);
+	expect(() => new TimeoutDelayClock({queue:{qid:0}}, 0)).toThrow(/non-zero/i);
 });
 
 test("streams are independent - animation does not include timeout ranks", () => {
@@ -251,17 +251,15 @@ test("dequeue subscriber that was re-enqueued during flush", () => {
 	expect(calls).toEqual(1);
 });
 
-// --- SchedulerQueue adapter tests ---
+// --- Reactive integration tests ---
 
-test("SchedulerQueue works with ReactiveValue subscribe", () => {
+test("ReactiveValue subscribe uses scheduler clock directly", () => {
 	const sched = new Scheduler();
-	const clock = sched.getClock("microtask");
-	const sq = new SchedulerQueue(clock, sched);
 	const r = new ReactiveValue(0);
 	let count = 0;
-	r.subscribe(() => count++, sq);
+	r.subscribe(() => count++, { scheduler: sched, mode: "microtask" });
 	r.value++;
-	sq.flush();
+	sched.flush();
 	expect(count).toEqual(1);
 });
 
