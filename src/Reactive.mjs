@@ -16,9 +16,9 @@ class SynchronousIterator{
 		this.stop = stop;
 	}
 	unsubscribe(i){
-		this.stop--;
+		--this.stop;
 		if (this.i >= i)
-			this.i--;
+			--this.i;
 	}
 }
 
@@ -62,36 +62,24 @@ export class Reactive{
 		unsubscribe: false
 	};
 	/** Indicates when the last notify call was performed, as given by a Scheduler.calls timestamp;
-	 * this is used to avoid repeatedly queueing notifications in a loop
-	 * @type {number}
+	 * this is used to avoid repeatedly queueing notifications in a loop. Lazily initialized on
+	 * first async subscriber.
+	 * @member {number} dirty
 	 * @private
 	 */
-	dirty;
-	/** A list of links to synchrounous subscribers
-	 * @type {Link[]}
+	/** A list of links to synchronous subscribers. Lazily initialized on first sync subscriber.
+	 * @member {Link[]} sync
 	 * @private
 	 */
-	sync = [];
-	/** A list of links to asynchronous subscribers
-	 * @type {Link[]}
+	/** A list of links to asynchronous subscribers. Lazily initialized on first async subscriber.
+	 * @member {Link[]} async
 	 * @private
 	 */
-	async = [];
 	/** Used to handle recursive notification of synchronous subscribers; initialized when
-	 * the first sync subscriber is registered
+	 * the second sync subscriber is registered
 	 * @member {SynchronousIterator} sync_iter
 	 * @private
 	 */
-
-	/** While subclasses can implement this however they want, to be compatible with the library's
-	 * builtin variable wrapping features, the constructor should take either:
-	 * 1. A single raw value as the first argument. This can be used to wrap data properties.
-	 * 2. A getter and setter function as the first two arguments, respectively. This can be used to
-	 *    wrap accessor properties.
-	 */
-	constructor(){
-		this.dirty = Scheduler.calls-1;
-	}
 
 	/** Reactive value. Modifying the value will notify subscribers. The accessor getter/setter are
 	 * not inherited, so derived classes will need to implement both
@@ -143,7 +131,7 @@ export class Reactive{
 		// queue async first, since they could be called synchronously in a recursive notify;
 		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
 		// cases, e.g. no sync calls, no new subscriptions, no queues flushed
-		if (a.length && this.dirty !== Scheduler.calls){
+		if (a && this.dirty !== Scheduler.calls){
 			this.dirty = Scheduler.calls;
 			for (const link of a)
 				link.enqueue();
@@ -163,7 +151,7 @@ export class Reactive{
 			stack unwinds, all unvisited sync links are now clean, as they've been handled by the
 			recursive notify. To implement this, we'll use a shared iterator variable sync_iter.
 		*/
-		const sl = s.length;
+		const sl = s && s.length;
 		if (sl){
 			// recursive notifies could end up calling async, not just from this value; there are
 			// some things you can do to narrow the bounds, but I don't think it is worth it
@@ -171,7 +159,7 @@ export class Reactive{
 			// all but first we need to track if still dirty before running
 			const si = this.sync_iter;
 			if (sl > 1){
-				for (let i=1; i<sl; i++)
+				for (let i=1; i<sl; ++i)
 					s[i].dirty = true;
 				// set iter vars before first sync call, since first may unsubscribe;
 				// any new sync subscribers will be clean, hence bounds on length
@@ -180,7 +168,7 @@ export class Reactive{
 			let link = s[0];
 			link.call();
 			if (sl > 1){
-				for (; si.i<si.stop; si.i++){
+				for (; si.i<si.stop; ++si.i){
 					link = s[si.i];
 					if (link.dirty)
 						link.call();
@@ -235,7 +223,8 @@ export class Reactive{
 			subscriber = Subscriber.attach(subscriber, opts.tracking ?? defaults.tracking);
 		// check if already subscribed;
 		// infrequent and usually few items, so we just do a linear search
-		if (Link.findSubscriber(this.sync, subscriber) !== -1 || Link.findSubscriber(this.async, subscriber) !== -1)
+		if ((this.sync && Link.findSubscriber(this.sync, subscriber) !== -1) ||
+			(this.async && Link.findSubscriber(this.async, subscriber) !== -1))
 			throw Error("Already subscribed");
 		// resolve the clock for this subscription
 		const sched = opts.scheduler ?? defaults.scheduler;
@@ -249,15 +238,17 @@ export class Reactive{
 		// add subscriber
 		const link = new Link(subscriber, clock);
 		if (!clock){
-			if (this.sync.push(link) > 1 && !this.sync_iter)
+			const arr = this.sync || (this.sync = []);
+			if (arr.push(link) > 1 && !this.sync_iter)
 				this.sync_iter = new SynchronousIterator();
 		}
 		else{
-			this.async.push(link);
-			// forces requeue on next notify
-			this.dirty--;
+			(this.async || (this.async = [])).push(link);
+			// forces requeue on next notify; dirty is lazily initialized here
+			this.dirty = (this.dirty ?? Scheduler.calls) - 1;
 		}
-		subscriber.subscribe(this, link);
+		if (subscriber.subscribe)
+			subscriber.subscribe(this, link);
 		// first notify
 		const notify = "notify" in opts ? opts.notify : defaults.notify;
 		if (notify !== false){
@@ -272,7 +263,7 @@ export class Reactive{
 		// return value
 		if (opts.unsubscribe ?? defaults.unsubscribe)
 			return this.unsubscribe.bind(this, subscriber);
-		return this.sync.length + this.async.length;
+		return (this.sync ? this.sync.length : 0) + (this.async ? this.async.length : 0);
 	}
 	/** Unsubscribe from this value's changes
 	 * @param {?(function | Subscriber)} subscriber The subscriber you wish to unsubscribe from
@@ -284,13 +275,14 @@ export class Reactive{
 	unsubscribe(subscriber){
 		// unsubscribe all links
 		if (!subscriber){
-			if (this.sync.length){
+			if (this.sync){
 				for (const l of this.sync)
 					l.subscriber.unsubscribe(this, l);
-				this.sync_iter.reset();
+				if (this.sync_iter)
+					this.sync_iter.reset();
 				this.sync.length = 0;
 			}
-			if (this.async.length){
+			if (this.async){
 				for (const l of this.async)
 					l.subscriber.unsubscribe(this, l);
 				this.async.length = 0;
@@ -302,7 +294,7 @@ export class Reactive{
 		// remove link from value;
 		// infrequent, so we just do a linear search
 		let link = null;
-		let i = Link.findSubscriber(this.sync, subscriber);
+		let i = this.sync ? Link.findSubscriber(this.sync, subscriber) : -1;
 		if (i !== -1){
 			link = this.sync.splice(i, 1)[0];
 			// in case of unsubscribe during synchronous notify
@@ -310,7 +302,7 @@ export class Reactive{
 				this.sync_iter.unsubscribe(i);
 		}
 		else{
-			i = Link.findSubscriber(this.async, subscriber);
+			i = this.async ? Link.findSubscriber(this.async, subscriber) : -1;
 			if (i !== -1)
 				link = this.async.splice(i, 1)[0];
 		}
@@ -318,7 +310,7 @@ export class Reactive{
 			throw Error("Not subscribed");
 		// remove link from subscriber
 		subscriber.unsubscribe(this, link);
-		return this.sync.length + this.async.length;
+		return (this.sync ? this.sync.length : 0) + (this.async ? this.async.length : 0);
 	}
 }
 wrappable(Reactive.prototype, {

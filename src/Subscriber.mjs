@@ -58,7 +58,7 @@ export class Link{
 	/** Synchronously call the link's subscriber
 	 * @see Subscriber#call
 	 */
-	call(){ return this.subscriber.call();}
+	call(){ return this.subscriber.call(null);}
 	/** Queue the subscriber of this link via the clock's scheduler
 	 * @see Subscriber#enqueue
 	 */
@@ -128,11 +128,10 @@ export class Subscriber{
 	calls = 0;
 	/** How many dependencies requested a notification through a particular clock; this is used
 	 * to track whether an unsubscribe should dequeue. Keyed by clock.id, each value is
-	 * `{count, clock}`.
-	 * @type {Object<number, {count: number, clock: Clock}>}
+	 * `{count, clock}`. Lazily initialized on first async enqueue.
+	 * @member {Object<number, {count: number, clock: Clock}>} queued
 	 * @protected
 	 */
-	queued = {};
 
 	/** Create a new subscriber
 	 * @param {?function} callable The callback function to wrap. This can be omitted for subclasses
@@ -153,7 +152,8 @@ export class Subscriber{
 	 * 	the call was triggered manually or synchronously.
 	 */
 	call(clockId){
-		delete this.queued[clockId];
+		if (clockId)
+			delete this.queued[clockId];
 		this.dequeue();
 		this.callable();
 	}
@@ -176,18 +176,20 @@ export class Subscriber{
 		link.dirty = true;
 		const clock = link.clock;
 		const id = clock.id;
-		if (!(id in this.queued)){
-			this.queued[id] = {count:1, clock};
+		const queued = this.queued || (this.queued = {});
+		if (!(id in queued)){
+			queued[id] = {count:1, clock};
 			clock.scheduler.enqueue(clock, this);
 		}
 		// already queued for this clock
-		else this.queued[id].count++;
+		else queued[id].count++;
 	}
 	/** Dequeue this subscriber from all schedulers it is queued in. Typical code should not need
 	 * to call this. This can be called manually, in which case you will also need to call
 	 * {@link Subscriber#clean}
 	 */
 	dequeue(){
+		if (!this.queued) return;
 		// multiple clocks should be a fairly rare case
 		for (const id in this.queued){
 			const { clock } = this.queued[id];
@@ -196,12 +198,6 @@ export class Subscriber{
 		}
 	}
 
-	/** Add a new dependency link to this subscriber
-	 * @param {Reactive} dep the dependency
-	 * @param {?Link} link the link to add
-	 * @protected
-	 */
-	subscribe(dep, link){}
 	/** Remove a previous dependency link from this subscriber
 	 * @param {Reactive} dep the dependency
 	 * @param {?Link} link the link to remove
@@ -209,7 +205,7 @@ export class Subscriber{
 	 */
 	unsubscribe(dep, link){
 		// dequeue if needed; synchronous link won't have clock
-		if (link.dirty && link.clock){
+		if (link.dirty && link.clock && this.queued){
 			const id = link.clock.id;
 			const v = this.queued[id];
 			if (!--v.count){
@@ -316,7 +312,6 @@ export class TrackingSubscriber extends Subscriber{
 		}
 	}
 	subscribe(dep, link){
-		super.subscribe(dep, link);
 		link.dep = dep;
 		// all clean links need to be cached
 		if (this.caching)
