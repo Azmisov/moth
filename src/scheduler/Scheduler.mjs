@@ -409,7 +409,6 @@ export class RankedTimeoutQueue {
 				return;
 			// flush this sub-queue; don't remove from heap before flush because
 			// recursive flush needs the heap intact to find sub-queues
-			Scheduler.called();
 			queue.flush(clock);
 			// FIFOQueue.flush guarantees empty on return; remove from heap. Need to check presence
 			// after flush since recursive flush or dequeues could have removed it already.

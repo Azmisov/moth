@@ -134,6 +134,17 @@ test("unsubscribe all", async () => {
 	expect(count).toBe(1);
 	expect(bits).toBe(0b1);
 });
+// unsubscribe all with a single sync subscriber should not crash
+test("unsubscribe all single sync", () => {
+	const r = new ReactiveValue(0);
+	let count = 0;
+	r.subscribe(() => count++, "sync");
+	r.value++;
+	expect(count).toBe(1);
+	r.unsubscribe();
+	r.value++;
+	expect(count).toBe(1);
+});
 // small reap test (manually tested via debugging interface)
 test("reap (manually tested)", () => {
 	let v = new ReactiveValue(0);

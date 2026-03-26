@@ -16,7 +16,7 @@
  * ticks (timeout(N), idle(N)).
  */
 
-let _clockId = 0;
+let _clockId = 1;
 /** Allocate a unique clock ID. Each clock gets a unique integer ID, used by {@link Subscriber}
  * to key per-clock queue bookkeeping. Exported for custom clock implementations.
  * @returns {number}
