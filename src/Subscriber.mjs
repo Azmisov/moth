@@ -126,9 +126,10 @@ export class Subscriber{
 	 * @private
 	 */
 	calls = 0;
-	/** How many dependencies requested a notification through a particular queue; this is used
-	 * to track whether an unsubscribe should dequeue. Each value is of the form `{count, queue}`.
-	 * @type {Object<string, object>}
+	/** How many dependencies requested a notification through a particular clock; this is used
+	 * to track whether an unsubscribe should dequeue. Keyed by clock.id, each value is
+	 * `{count, clock}`.
+	 * @type {Object<Symbol, {count: number, clock: Clock}>}
 	 * @protected
 	 */
 	queued = {};
@@ -147,12 +148,12 @@ export class Subscriber{
 		}
 	}
 	/** Calls the subscriber's callback function, thus notifying of any dependency changes. The
-	 * subscriber is dequeued from any queues. This can be safely called manually if desired.
-	 * @param {?(string | Symbol)} qid The {@link Queue.qid} identifier for the queue that triggered
-	 * 	this call. Can be omitted if the call was triggered manually or synchronously.
+	 * subscriber is dequeued from any other clocks. This can be safely called manually if desired.
+	 * @param {?Symbol} clockId The clock identifier that triggered this call. Can be omitted if
+	 * 	the call was triggered manually or synchronously.
 	 */
-	call(qid){
-		delete this.queued[qid];
+	call(clockId){
+		delete this.queued[clockId];
 		this.dequeue();
 		this.callable();
 	}
@@ -174,27 +175,24 @@ export class Subscriber{
 			return;
 		link.dirty = true;
 		const clock = link.clock;
-		const qid = clock.qid;
-		if (!(qid in this.queued)){
-			// our options are: Map (much slower than Object), ref counting clocks (O(n) dequeue),
-			// or to store a reference of the clock. The last seems the best option
-			this.queued[qid] = {count:1, clock};
+		const id = clock.id;
+		if (!(id in this.queued)){
+			this.queued[id] = {count:1, clock};
 			clock.scheduler.enqueue(clock, this);
 		}
-		// already queued for this scheduler
-		else this.queued[qid].count++;
+		// already queued for this clock
+		else this.queued[id].count++;
 	}
 	/** Dequeue this subscriber from all schedulers it is queued in. Typical code should not need
 	 * to call this. This can be called manually, in which case you will also need to call
 	 * {@link Subscriber#clean}
 	 */
 	dequeue(){
-		// multiple queues should be a fairly rare case
-		for (const qid in this.queued){
-			// guaranteed not reaped since non-empty
-			const { clock } = this.queued[qid];
+		// multiple clocks should be a fairly rare case
+		for (const id in this.queued){
+			const { clock } = this.queued[id];
 			clock.scheduler.dequeue(clock, this);
-			delete this.queued[qid];
+			delete this.queued[id];
 		}
 	}
 
@@ -212,11 +210,11 @@ export class Subscriber{
 	unsubscribe(dep, link){
 		// dequeue if needed; synchronous link won't have clock
 		if (link.dirty && link.clock){
-			const qid = link.clock.qid;
-			const v = this.queued[qid];
+			const id = link.clock.id;
+			const v = this.queued[id];
 			if (!--v.count){
 				v.clock.scheduler.dequeue(v.clock, this);
-				delete this.queued[qid];
+				delete this.queued[id];
 			}
 		}
 	}

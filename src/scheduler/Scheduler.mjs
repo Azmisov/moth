@@ -28,15 +28,14 @@
  *
  * ```
  * Clock fires (onflush)
- *   → Scheduler._makeFlush(clock)
- *     → RankedQueue.flush(clock, mask)
- *       while (nonemptyMask & mask):
- *         find lowest-rank non-empty queue
- *         → FIFOQueue.flush(qid)                  [non-timeout: drain double buffer]
- *         → RankedTimeoutQueue.flush(clock, qid)  [timeout: drain sub-queues <= timeout]
- *           while (nonempty, sorted ascending):
- *             → FIFOQueue.flush(qid)
- *         loop back to check if lower-rank refilled
+ *   → RankedQueue.flush(clock, mask)
+ *     while (nonemptyMask & mask):
+ *       find lowest-rank non-empty queue
+ *       → FIFOQueue.flush()                      [non-timeout: drain double buffer]
+ *       → RankedTimeoutQueue.flush(clock)         [timeout: drain sub-queues <= timeout]
+ *         while (nonempty, sorted ascending):
+ *           → FIFOQueue.flush()
+ *       loop back to check if lower-rank refilled
  * ```
  *
  * ## Component Responsibilities
@@ -109,7 +108,6 @@ const _maxTimeoutClock = { timeout: Infinity, constructor: { rank: -1 } };
  * @name SchedulerInternalQueue#flush
  * @function
  * @param {Clock} clock Clock that triggered the flush
- * @param {string | Symbol} qid Queue identifier to pass to subscriber.call()
  */
 /**
  * Optional: check if the queue can make progress for the given clock. If defined and returns
@@ -147,12 +145,6 @@ class RankedQueue {
 	 */
 	queues = {};
 
-	/** Unique queue identifier, used by Subscriber to index which queues a subscriber has been
-	 * enqueued in
-	 * @type {Symbol}
-	 */
-	qid = Symbol();
-
 	/** Ensure a queue exists for the given clock's rank
 	 * @param {Clock} clock A clock instance
 	 * @returns {FIFOQueue | RankedTimeoutQueue}
@@ -166,7 +158,7 @@ class RankedQueue {
 		let queue = this.queues[rank];
 		if (!queue) {
 			const Clazz = clock.constructor.queueClass || FIFOQueue;
-			queue = this.queues[rank] = new Clazz();
+			queue = this.queues[rank] = new Clazz(clock);
 		}
 		return queue;
 	}
@@ -217,7 +209,7 @@ class RankedQueue {
 				skipMask |= lowest;
 				continue;
 			}
-			queue.flush(flushClock, this.qid);
+			queue.flush(flushClock);
 			if (queue.empty)
 				this.nonemptyMask &= ~lowest;
 			// reset skipMask: this flush may have enqueued into a skipped rank;
@@ -372,11 +364,12 @@ export class RankedTimeoutQueue {
 	 * @returns {FIFOQueue}
 	 * @private
 	 */
-	_ensureSubQueue(timeout) {
+	_ensureSubQueue(clock) {
+		const timeout = clock.timeout;
 		let queue = this.index[timeout];
 		if (!queue) {
 			this.count++;
-			queue = this.index[timeout] = new FIFOQueue();
+			queue = this.index[timeout] = new FIFOQueue(clock);
 			queue.timeout = timeout;
 			queue.heapIndex = -1;
 		}
@@ -388,7 +381,7 @@ export class RankedTimeoutQueue {
 		return this.heap.empty;
 	}
 	enqueue(clock, subscriber) {
-		const queue = this._ensureSubQueue(clock.timeout);
+		const queue = this._ensureSubQueue(clock);
 		queue.enqueue(clock, subscriber);
 		// first subscriber, add to nonempty heap
 		if (queue.heapIndex === -1)
@@ -407,9 +400,8 @@ export class RankedTimeoutQueue {
 	}
 	/** Flush all sub-queues with timeout <= the triggering clock's timeout
 	 * @param {Clock} clock Clock instance with a timeout property
-	 * @param {string | Symbol} qid Queue identifier to pass to subscriber.call()
 	 */
-	flush(clock, qid) {
+	flush(clock) {
 		const timeout = clock.timeout;
 		while (!this.heap.empty) {
 			const queue = this.heap.peek();
@@ -419,7 +411,7 @@ export class RankedTimeoutQueue {
 			// flush this sub-queue; don't remove from heap before flush because
 			// recursive flush needs the heap intact to find sub-queues
 			Queue.called();
-			queue.flush(clock, qid);
+			queue.flush(clock);
 			// FIFOQueue.flush guarantees empty on return; remove from heap. Need to check presence
 			// after flush since recursive flush or dequeues could have removed it already.
 			if (queue.heapIndex !== -1)
@@ -439,6 +431,14 @@ export class RankedTimeoutQueue {
 class FIFOQueue {
 	/** Null values in queue before compacting the buffer */
 	static compactLimit = 500
+	/** Clock identifier passed to subscriber.call() during flush
+	 * @type {Symbol}
+	 */
+	clockId;
+	/** @param {Clock} clock Clock this queue is associated with */
+	constructor(clock) {
+		this.clockId = clock.id;
+	}
 	/** Generator for subscribers currently being flushed */
 	iter = null;
 	/** Number of live (non-null) subscribers in {@link buffer}
@@ -504,11 +504,12 @@ class FIFOQueue {
 	/** Flush all queued subscribers. Handles recursive flushes from within subscribers.
 	 * After this method returns, the queue is guaranteed to be empty — all subscribers that
 	 * were pending (including any enqueued during the flush) have been called.
-	 * @param {Clock} clock Clock instance (unused by FIFOQueue, accepted for uniform interface)
-	 * @param {string | Symbol} qid Queue identifier to pass to subscriber.call()
+	 * @param {Clock} clock Clock that triggered the flush (unused by FIFOQueue, accepted
+	 *  for uniform interface)
 	 */
-	flush(clock, qid) {
+	flush(clock) {
 		Queue.called();
+		const clockId = this.clockId;
 		// A subscriber may call flush() recursively. Both the outer and recursive call iterate
 		// this.iter via for...of, which advances the shared iterator by calling .next(). The
 		// recursive call drains the iterator to completion; when it returns, the outer call's
@@ -517,7 +518,7 @@ class FIFOQueue {
 		if (this.iter){
 			for (const subscriber of this.iter){
 				if (subscriber)
-					subscriber.call(qid);
+					subscriber.call(clockId);
 			}
 			// must clear before entering the while loop; otherwise the swap puts
 			// already-processed subscribers back into flushBuffer
@@ -531,7 +532,7 @@ class FIFOQueue {
 			this.iter = this.flushBuffer[Symbol.iterator]();
 			for (const subscriber of this.iter){
 				if (subscriber)
-					subscriber.call(qid);
+					subscriber.call(clockId);
 			}
 			this.flushBuffer.length = 0;
 		}
@@ -572,13 +573,6 @@ export class Scheduler {
 	 * @private
 	 */
 	clocksDelay = {};
-
-	/** Get the queue identifier
-	 * @type {Symbol}
-	 */
-	get qid() {
-		return this.queue.qid;
-	}
 
 	/** Get or create a clock for a given mode and optional timeout. The clock is owned by
 	 * this scheduler — singleton clocks are shared across calls with the same mode, and
@@ -672,29 +666,3 @@ export class Scheduler {
 
 /** The default global scheduler instance */
 export const scheduler = new Scheduler();
-
-/** Adapter that implements the v1.0 Queue interface on top of the v2.0 Scheduler. This allows
- * the existing Reactive.subscribe / Link / Subscriber infrastructure to work with the new
- * scheduler without modification. Each SchedulerQueue wraps a clock+scheduler pair and
- * presents the same enqueue/dequeue/flush interface that Link expects.
- */
-export class SchedulerQueue {
-	/** @param {Clock} clock A clock instance
-	 *  @param {Scheduler} [sched] Scheduler to use; defaults to global scheduler
-	 */
-	constructor(clock, sched) {
-		this.clock = clock;
-		this.scheduler = sched || scheduler;
-		// use the scheduler's qid so all subscribers share one dequeue namespace
-		this.qid = this.scheduler.qid;
-	}
-	enqueue(subscriber) {
-		this.scheduler.enqueue(this.clock, subscriber);
-	}
-	dequeue(subscriber) {
-		this.scheduler.dequeue(this.clock, subscriber);
-	}
-	flush(recursive) {
-		this.scheduler.flush(this.clock);
-	}
-}
