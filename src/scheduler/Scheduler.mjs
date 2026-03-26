@@ -66,7 +66,6 @@
  *   Handles deduplication (same subscriber, same clock) via refcounting, and cross-clock
  *   dequeue on call (first clock to fire clears subscriber from all other clocks).
  */
-import { Queue } from "../Queue.mjs";
 
 
 /** Sentinel clock object used when a non-timeout clock triggers a flush that includes a
@@ -410,7 +409,7 @@ export class RankedTimeoutQueue {
 				return;
 			// flush this sub-queue; don't remove from heap before flush because
 			// recursive flush needs the heap intact to find sub-queues
-			Queue.called();
+			Scheduler.called();
 			queue.flush(clock);
 			// FIFOQueue.flush guarantees empty on return; remove from heap. Need to check presence
 			// after flush since recursive flush or dequeues could have removed it already.
@@ -526,7 +525,7 @@ class FIFOQueue {
 		while (this._bufferQueued){
 			// each buffer swap is a new flush generation; Reactive.notify uses Queue.calls
 			// to avoid re-enqueuing in the same generation, so we must increment per swap
-			Queue.called();
+			Scheduler.called();
 			const swap = this.flushBuffer;
 			this.flushBuffer = this.buffer;
 			this.buffer = swap;
@@ -548,6 +547,20 @@ class FIFOQueue {
  * system.
  */
 export class Scheduler {
+	/** Flush generation counter. Incremented each time a queue flushes subscribers. Used by
+	 * {@link Reactive#notify} to deduplicate async enqueues within the same synchronous batch —
+	 * if a reactive's dirty stamp matches the current generation, re-enqueuing is skipped.
+	 * @type {number}
+	 * @static
+	 */
+	static calls = 0;
+	/** Increment the flush generation counter. Call this when a queue flush occurs.
+	 * @static
+	 */
+	static called(){
+		if (++this.calls === Number.MAX_SAFE_INTEGER)
+			this.calls = Number.MIN_SAFE_INTEGER+1;
+	}
 	/** Registry of non-parameterized clock classes, keyed by mode string. Clock modules
 	 * register themselves here to avoid circular imports.
 	 * @type {Object<string, function(new:Clock, RankedQueue)>}

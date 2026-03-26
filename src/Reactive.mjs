@@ -1,5 +1,4 @@
 import wrappable from "./wrappable.mjs";
-import { Queue } from "./Queue.mjs";
 import { Subscriber, Link } from "./Subscriber.mjs";
 import { Scheduler, scheduler } from "./scheduler/Scheduler.mjs";
 
@@ -62,7 +61,7 @@ export class Reactive{
 		tracking: false,
 		unsubscribe: false
 	};
-	/** Indicates when the last notify call was performed, as given by a Queue.calls timestamp;
+	/** Indicates when the last notify call was performed, as given by a Scheduler.calls timestamp;
 	 * this is used to avoid repeatedly queueing notifications in a loop
 	 * @type {number}
 	 * @private
@@ -91,7 +90,7 @@ export class Reactive{
 	 *    wrap accessor properties.
 	 */
 	constructor(){
-		this.dirty = Queue.calls-1;
+		this.dirty = Scheduler.calls-1;
 	}
 
 	/** Reactive value. Modifying the value will notify subscribers. The accessor getter/setter are
@@ -144,8 +143,8 @@ export class Reactive{
 		// queue async first, since they could be called synchronously in a recursive notify;
 		// we use the dirty counter to avoid repeated queueing in a loop; it only helps in simple
 		// cases, e.g. no sync calls, no new subscriptions, no queues flushed
-		if (a.length && this.dirty !== Queue.calls){
-			this.dirty = Queue.calls;
+		if (a.length && this.dirty !== Scheduler.calls){
+			this.dirty = Scheduler.calls;
 			for (const link of a)
 				link.enqueue();
 		}
@@ -168,7 +167,7 @@ export class Reactive{
 		if (sl){
 			// recursive notifies could end up calling async, not just from this value; there are
 			// some things you can do to narrow the bounds, but I don't think it is worth it
-			Queue.called();
+			Scheduler.called();
 			// all but first we need to track if still dirty before running
 			const si = this.sync_iter;
 			if (sl > 1){
@@ -264,7 +263,7 @@ export class Reactive{
 		if (notify !== false){
 			// sync (possibly forced)
 			if ((notify === null || notify === "sync") || !clock){
-				Queue.called();
+				Scheduler.called();
 				link.call();
 			}
 			// async
