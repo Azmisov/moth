@@ -45,9 +45,10 @@ export class Reactive{
 	 * @private
 	 */
 	static _track = null;
-	/** Default options for {@link Reactive#subscribe}. By default, a microtask clock is
-	 * used, with `notify`, `tracking`, and `unsubscribe` all set to `false`. You can change these
-	 * default options to interface better with external libraries or your preferred syntax.
+	/** Default options for {@link Reactive#subscribe}. You can change these default options to
+	 * interface better with external libraries or your preferred syntax. All default values must
+	 * be provided, except `unsubscribe`. If `unsubscribe` is ommitted, it autodetects and returns
+	 * when the subscriber is an anonymous function.
 	 * @memberof Reactive
 	 * @static
 	 * @type {Reactive~SubscribeOptions}
@@ -58,8 +59,7 @@ export class Reactive{
 		mode: "microtask",
 		timeout: -1,
 		notify: false,
-		tracking: false,
-		unsubscribe: false
+		tracking: false
 	};
 	/** Indicates when the last notify call was performed, as given by a Scheduler.calls timestamp;
 	 * this is used to avoid repeatedly queueing notifications in a loop. Lazily initialized on
@@ -120,6 +120,12 @@ export class Reactive{
 	 * @see Reactive#value
 	 */
 	get(){ return this.value; }
+	/** Number of active subscribers
+	 * @type {number}
+	 */
+	get subscribers(){
+		return (this.sync ? this.sync.length : 0) + (this.async ? this.async.length : 0);
+	}
 
 	/** Manually notify subscribers that the value has changed. You might call this if the variable
 	 * has been modified deeply, and so was not changed via {@link Reactive#set} or assigning to
@@ -134,7 +140,7 @@ export class Reactive{
 		if (a && this.dirty !== Scheduler.calls){
 			this.dirty = Scheduler.calls;
 			for (const link of a)
-				link.enqueue();
+				link.subscriber.enqueue(link);
 		}
 		/* For sync, we have to deal with recursive calls. We could queue all but the first and let
 			the async logic handle it; we'd want a separate LIFO queue (technically a stack) to
@@ -166,12 +172,12 @@ export class Reactive{
 				si.reset(1, sl);
 			}
 			let link = s[0];
-			link.call();
+			link.subscriber.call(null);
 			if (sl > 1){
 				for (; si.i<si.stop; ++si.i){
 					link = s[si.i];
 					if (link.dirty)
-						link.call();
+						link.subscriber.call(null);
 				}
 				// forces any recursive loops further up stack to exit, since all links are clean now
 				si.reset();
@@ -210,15 +216,16 @@ export class Reactive{
 	 * @param {Reactive~SubscribeOptions | null | string} opts For full configuration, this should
 	 *  be an object containing config options. Otherwise it can be just the
 	 *  {@link Reactive~SubscribeOptions|mode} config option.
-	 * @returns {number | function} By default, it returns the new subscriber count. If requested
-	 *  via {@link Reactive~SubscribeOptions|unsubscribe} config option, an unsubscribe function can
-	 *  be returned instead.
+	 * @returns {?function} If requested via {@link Reactive~SubscribeOptions|unsubscribe} config
+	 *  option, returns a bound unsubscribe function.
 	 */
 	subscribe(subscriber, opts={}){
 		const defaults = this.subscribe_defaults || Reactive.subscribe_defaults;
 		// opts can just be mode string
 		if (!opts || opts.constructor !== Object)
 			opts = {mode: opts};
+		// auto-detect anonymous functions — caller has no reference to unsubscribe with
+		const anon = typeof subscriber === "function" && !subscriber.name;
 		if (!(subscriber instanceof Subscriber))
 			subscriber = Subscriber.attach(subscriber, opts.tracking ?? defaults.tracking);
 		// check if already subscribed;
@@ -227,14 +234,13 @@ export class Reactive{
 			(this.async && Link.findSubscriber(this.async, subscriber) !== -1))
 			throw Error("Already subscribed");
 		// resolve the clock for this subscription
-		const sched = opts.scheduler ?? defaults.scheduler;
+		let clock = null;
 		const mode = "mode" in opts ? opts.mode : defaults.mode;
-		const timeout = opts.timeout ?? defaults.timeout;
-		let clock;
-		if (mode === null || mode === "sync")
-			clock = null;
-		else
+		if (mode && mode !== "sync") {
+			const sched = opts.scheduler ?? defaults.scheduler;
+			const timeout = opts.timeout ?? defaults.timeout;
 			clock = sched.getClock(mode, timeout);
+		}
 		// add subscriber
 		const link = new Link(subscriber, clock);
 		if (!clock){
@@ -247,6 +253,7 @@ export class Reactive{
 			// forces requeue on next notify; dirty is lazily initialized here
 			this.dirty = (this.dirty ?? Scheduler.calls) - 1;
 		}
+		// tracks the reactive on the subscriber if subscriber wants
 		if (subscriber.subscribe)
 			subscriber.subscribe(this, link);
 		// first notify
@@ -255,22 +262,19 @@ export class Reactive{
 			// sync (possibly forced)
 			if ((notify === null || notify === "sync") || !clock){
 				Scheduler.called();
-				link.call();
+				link.subscriber.call(null);
 			}
 			// async
-			else link.enqueue();
+			else link.subscriber.enqueue(link);
 		}
-		// return value
-		if (opts.unsubscribe ?? defaults.unsubscribe)
+		if (opts.unsubscribe ?? defaults.unsubscribe ?? anon)
 			return this.unsubscribe.bind(this, subscriber);
-		return (this.sync ? this.sync.length : 0) + (this.async ? this.async.length : 0);
 	}
 	/** Unsubscribe from this value's changes
 	 * @param {?(function | Subscriber)} subscriber The subscriber you wish to unsubscribe from
 	 * value changes, and remove as a dependency. If a function, it should have an attached
 	 * {@link Subscriber} via {@link Subscriber.attach}. This argument can also be falsey/ommitted,
 	 * which unsubscribes all.
-	 * @returns {number} The new subscriber count
 	 */
 	unsubscribe(subscriber){
 		// unsubscribe all links
@@ -287,7 +291,7 @@ export class Reactive{
 					l.subscriber.unsubscribe(this, l);
 				this.async.length = 0;
 			}
-			return 0;
+			return;
 		}
 		if (!(subscriber instanceof Subscriber))
 			subscriber = subscriber[Subscriber.key];
@@ -310,7 +314,6 @@ export class Reactive{
 			throw Error("Not subscribed");
 		// remove link from subscriber
 		subscriber.unsubscribe(this, link);
-		return (this.sync ? this.sync.length : 0) + (this.async ? this.async.length : 0);
 	}
 }
 wrappable(Reactive.prototype, {

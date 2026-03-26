@@ -45,7 +45,9 @@ export class Link{
 	}
 	/** Indicates whether the link is dirty, meaning the value for {@link Link#dep} has changed,
 	 * necessitating a notification to {@link Link#subscriber}. This can be set to `false`, marking
-	 * the link clean.
+	 * the link clean. Uses a counter trick: dirty is true when `_dirty === subscriber.calls`.
+	 * Setting dirty stamps the current counter; {@link Subscriber#clean} increments the counter,
+	 * making all links clean in O(1) without iteration.
 	 * @type {boolean}
 	 * @default false
 	 */
@@ -54,16 +56,6 @@ export class Link{
 	}
 	set dirty(toggle){
 		this._dirty = this.subscriber.calls - !toggle;
-	}
-	/** Synchronously call the link's subscriber
-	 * @see Subscriber#call
-	 */
-	call(){ return this.subscriber.call(null);}
-	/** Queue the subscriber of this link via the clock's scheduler
-	 * @see Subscriber#enqueue
-	 */
-	enqueue(){
-		this.subscriber.enqueue(this);
 	}
 
 	/** Search for a subscriber in a list of links

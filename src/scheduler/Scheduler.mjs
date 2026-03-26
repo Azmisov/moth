@@ -358,8 +358,8 @@ export class RankedTimeoutQueue {
 			this.count--;
 		}
 	}
-	/** Get or create a sub-queue for the given timeout
-	 * @param {number} timeout
+	/** Get or create a sub-queue for the given clock's timeout
+	 * @param {Clock} clock
 	 * @returns {FIFOQueue}
 	 * @private
 	 */
@@ -522,7 +522,7 @@ class FIFOQueue {
 			this.flushBuffer.length = 0;
 		}
 		while (this._bufferQueued){
-			// each buffer swap is a new flush generation; Reactive.notify uses Queue.calls
+			// each buffer swap is a new flush generation; Reactive.notify uses Scheduler.calls
 			// to avoid re-enqueuing in the same generation, so we must increment per swap
 			Scheduler.called();
 			const swap = this.flushBuffer;
@@ -647,8 +647,8 @@ export class Scheduler {
 			clock.unschedule();
 	}
 	/** Synchronously flush queues. If a clock is provided, flushes all queues up to and including
-	 * that clock's priority. If no clock is provided, flushes all queues. Unlike a clock's
-	 * the clock's own flush callback, this does not reset the clock's scheduled state — the OS timer remains
+	 * that clock's priority. If no clock is provided, flushes all queues. Unlike the clock's own
+	 * flush callback, this does not reset the clock's scheduled state — the OS timer remains
 	 * active and will fire as a no-op if the queue is already drained.
 	 * @param {Clock} [clock] A clock instance; precondition that it belongs to this Scheduler.
 	 *  If omitted, all queues are flushed.

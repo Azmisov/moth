@@ -22,6 +22,11 @@ export class ReactiveAccessor extends Reactive{
 			setter.call(this, value);
 			that.notify();
 		}
+		const trackedGetter = function(){
+			if (Reactive._track)
+				Reactive._track(that);
+			return getter.call(this);
+		};
 		Object.defineProperties(this, {
 			// while we only *need* to override value accessor, the accessor is a pain to do
 			// deferred binding on: it can only be accessed via getOwnPropertyDescriptor, and may
@@ -43,7 +48,7 @@ export class ReactiveAccessor extends Reactive{
 			},
 			value: {
 				configurable: true,
-				get: getter,
+				get: trackedGetter,
 				set: set
 			},
 			unwrap: {

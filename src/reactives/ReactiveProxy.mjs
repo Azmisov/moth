@@ -100,6 +100,8 @@ export class ReactiveProxy extends Reactive{
 		}
 	}
 	get value(){
+		if (Reactive._track)
+			Reactive._track(this);
 		return this._value;
 	}
 	set value(value){
